@@ -1,3 +1,13 @@
+---
+title: Muretto
+emoji: 🏎️
+colorFrom: red
+colorTo: gray
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
 # Muretto
 
 Live timing F1 a budget zero: tabellone, muretto (finestra pit, degrado, undercut),
