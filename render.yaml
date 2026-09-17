@@ -1,0 +1,10 @@
+# Render: New → Blueprint → questo repo. Piano free, immagine dal Dockerfile.
+services:
+  - type: web
+    name: muretto
+    runtime: docker
+    plan: free
+    envVars:
+      - key: PORT
+        value: "7860"
+    healthCheckPath: /api/state
