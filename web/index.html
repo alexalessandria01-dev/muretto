@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Muretto</title>
+<link rel="stylesheet" href="/web/vendor/uPlot.min.css">
+<link rel="stylesheet" href="/web/style.css">
+</head>
+<body>
+
+<header id="top">
+  <div class="brand">MURETTO <span class="sub" id="session-title">in attesa del feed…</span></div>
+  <div id="track-status" class="pill green">—</div>
+  <div class="stat"><span class="k">GIRO</span><span class="v" id="lap">–</span></div>
+  <div class="stat"><span class="k">RESTANO</span><span class="v" id="remaining">–</span></div>
+  <div class="stat"><span class="k">ARIA</span><span class="v" id="w-air">–</span></div>
+  <div class="stat"><span class="k">PISTA</span><span class="v" id="w-track">–</span></div>
+  <div class="stat"><span class="k">VENTO</span><span class="v" id="w-wind">–</span></div>
+  <div class="stat"><span class="k">PIOGGIA</span><span class="v" id="w-rain">–</span></div>
+  <div class="stat" id="replay-box" hidden><span class="k">REPLAY</span><span class="v" id="replay-pos">–</span></div>
+  <div id="conn" class="dot" title="connessione"></div>
+</header>
+
+<nav id="settings">
+  <label>Segui <select id="follow"></select></label>
+  <label title="Il feed è avanti rispetto alla TV: metti i secondi di ritardo per allinearlo">Ritardo TV <input id="delay" type="number" min="0" max="300" step="1" value="0"> s</label>
+  <label>Pit loss <input id="pit-loss" type="number" step="0.5" min="10" max="40"> s <span class="hint" id="pit-loss-hint"></span></label>
+  <span class="sep"></span>
+  <label><input type="checkbox" data-panel="battle" checked> Battaglia</label>
+  <label><input type="checkbox" data-panel="wall" checked> Muretto</label>
+  <label><input type="checkbox" data-panel="gaps" checked> Gap</label>
+  <label><input type="checkbox" data-panel="telemetry" checked> Telemetria</label>
+  <label><input type="checkbox" data-panel="map" checked> Mappa</label>
+  <label><input type="checkbox" data-panel="radio" checked> Radio</label>
+  <label><input type="checkbox" data-panel="rc" checked> Direzione gara</label>
+  <span class="sep"></span>
+  <label><input type="checkbox" id="opt-metrics"> Marcia/velocità in tabella</label>
+  <label><input type="checkbox" id="opt-autoplay" checked> Radio automatici</label>
+  <label><input type="checkbox" id="opt-chime"> Campanello direzione gara</label>
+  <span class="hint">★ clicca un pilota in tabella per i preferiti</span>
+</nav>
+
+<main>
+  <section id="board" class="panel">
+    <table id="leaderboard">
+      <thead><tr>
+        <th>P</th><th>Pilota</th><th></th><th class="r">Gap</th><th class="r">Int</th>
+        <th class="r">Ultimo</th><th class="r">Migliore</th><th>Settori</th>
+        <th>Gomma</th><th class="r">Soste</th><th>Stint</th><th class="metrics">Auto</th>
+      </tr></thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
+  <aside id="side">
+    <section class="panel" id="battle">
+      <div class="panel-head"><h2>Battaglia</h2><span class="hint" id="battle-hint"></span></div>
+      <div id="battle-body"></div>
+    </section>
+
+    <section class="panel" id="wall">
+      <div class="panel-head"><h2>Muretto</h2><span class="hint">seguito + preferiti</span></div>
+      <div id="wall-cards"></div>
+    </section>
+
+    <section class="panel" id="gaps">
+      <div class="panel-head"><h2>Gap dal leader, giro per giro</h2><span class="hint">asse invertito: più in alto = più vicino al leader</span></div>
+      <div id="chart-gaps"></div>
+    </section>
+  </aside>
+
+  <section class="panel" id="telemetry">
+    <div class="panel-head">
+      <h2>Telemetria</h2>
+      <label>1 <select class="tel-driver" data-slot="0"></select></label>
+      <label>2 <select class="tel-driver" data-slot="1"></select></label>
+      <label>3 <select class="tel-driver" data-slot="2"></select></label>
+      <span class="hint">ultimi 60 s · pieno = gas, tratteggio = freno</span>
+    </div>
+    <div class="charts">
+      <div id="chart-speed"></div>
+      <div id="chart-pedals"></div>
+      <div id="chart-gear"></div>
+    </div>
+  </section>
+
+  <section class="panel" id="map">
+    <div class="panel-head"><h2>Mappa</h2><span class="hint" id="map-hint"></span></div>
+    <canvas id="map-canvas" width="640" height="520"></canvas>
+  </section>
+
+  <section class="panel" id="radio">
+    <div class="panel-head"><h2>Team radio</h2><span class="hint" id="radio-count"></span></div>
+    <ul id="radio-list"></ul>
+  </section>
+
+  <section class="panel" id="rc">
+    <div class="panel-head"><h2>Direzione gara</h2></div>
+    <ul id="rc-list"></ul>
+  </section>
+</main>
+
+<script src="/web/vendor/uPlot.iife.min.js"></script>
+<script src="/web/app.js"></script>
+</body>
+</html>

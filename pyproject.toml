@@ -1,0 +1,12 @@
+[project]
+name = "muretto"
+version = "0.1.0"
+description = "Live timing F1 a budget zero: tabellone, muretto, telemetria, radio"
+requires-python = ">=3.11"
+dependencies = ["aiohttp>=3.9"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
