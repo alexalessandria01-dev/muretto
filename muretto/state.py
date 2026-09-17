@@ -78,7 +78,6 @@ class RaceState:
         self._pit_flag: dict[str, bool] = defaultdict(bool)
         self._lap_start: dict[str, float] = {}
         self.replay_position: float | None = None
-        self.pit_loss_override: float | None = None
         self.circuit_info: dict = {}  # da MultiViewer: pit_loss {normal, sc, vsc}, tracciato, curve
 
     # ------------------------------------------------------------------ ingresso
@@ -244,7 +243,7 @@ class RaceState:
         pit_losses = self.observed_pit_losses()
         observed = strategy.pit_loss_for(circuit, pit_losses) if pit_losses else None
         mv = self.circuit_info.get("pit_loss") or {}
-        loss_normal = self.pit_loss_override or mv.get("normal") or strategy.pit_loss_for(circuit, [])
+        loss_normal = mv.get("normal") or strategy.pit_loss_for(circuit, [])
         loss_sc = mv.get("sc") or round(loss_normal * 0.63, 1)
         loss_vsc = mv.get("vsc") or round(loss_normal * 0.72, 1)
         ts_data = self.data.get("TrackStatus", {})
@@ -374,8 +373,7 @@ class RaceState:
                 "rain": w.get("Rainfall"), "wind": w.get("WindSpeed"), "wind_dir": w.get("WindDirection"),
             },
             "pit_loss": {"value": pit_loss, "normal": loss_normal, "sc": loss_sc, "vsc": loss_vsc,
-                         "source": "manuale" if self.pit_loss_override else "MultiViewer" if mv else "tabella",
-                         "override": self.pit_loss_override is not None,
+                         "source": "MultiViewer" if mv else "tabella",
                          "observed_median": observed, "observed_n": len(pit_losses), "circuit": circuit},
             "drivers": rows,
             "radio": radio[-40:],

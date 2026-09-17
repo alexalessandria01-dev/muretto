@@ -1,9 +1,9 @@
 """Server locale: pagina statica + WebSocket ``/ws`` che spinge lo stato ai browser.
 
-Un solo task legge il feed (live o replay) e mette i messaggi in coda; un
-secondo li applica a ``RaceState`` dopo il ritardo scelto dall'utente (per
-sincronizzarsi con la TV). Ogni ``TICK`` secondi tutti i client ricevono
-``state`` (vista compatta) più i campioni ``car``/``pos`` arrivati.
+Un solo task legge il feed (live o replay) e aggiorna ``RaceState``. Ogni
+``TICK`` secondi lo snapshot e i campioni ``car``/``pos`` finiscono in uno
+storico di ``HISTORY`` secondi; ogni client li riceve con il proprio ritardo
+(per allinearsi alla TV senza spoiler), scelto dal browser.
 """
 
 from __future__ import annotations
@@ -23,6 +23,7 @@ from .state import RaceState
 log = logging.getLogger(__name__)
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 TICK = 0.5
+HISTORY = 300  # secondi di storico tenuti in RAM per il ritardo TV
 MULTIVIEWER = "https://api.multiviewer.app/api/v1/circuits/{key}/{year}"
 
 
@@ -48,23 +49,12 @@ class Hub:
     def __init__(self, feed):
         self.feed = feed
         self.state = RaceState()
-        self.clients: set[web.WebSocketResponse] = set()
-        self.delay = 0.0  # secondi di ritardo per allinearsi alla TV
-        self._queue: deque = deque()
+        self.clients: dict[web.WebSocketResponse, dict] = {}  # ws -> {"delay", "sent_state", "sent_tel"}
+        self.history: deque = deque(maxlen=int(HISTORY / TICK))  # (t, snapshot_json, car, pos)
         self._circuit_path: str | None = None
 
     async def ingest(self):
-        loop = asyncio.get_event_loop()
         async for topic, data, ts in self.feed:
-            self._queue.append((loop.time(), topic, data, ts))
-
-    async def apply_loop(self):
-        loop = asyncio.get_event_loop()
-        while True:
-            if not self._queue or self._queue[0][0] + self.delay > loop.time():
-                await asyncio.sleep(0.05)
-                continue
-            _, topic, data, ts = self._queue.popleft()
             try:
                 self.state.apply(topic, data, ts)
                 if isinstance(self.feed, ArchiveFeed):
@@ -92,53 +82,78 @@ class Hub:
             log.warning("MultiViewer non raggiungibile (%s): uso la tabella pit loss e la mappa dai GPS", e)
 
     async def broadcast(self):
+        loop = asyncio.get_event_loop()
         while True:
             await asyncio.sleep(TICK)
             car, pos = self.state.drain_telemetry()
-            if not self.clients:
-                continue
-            msgs = [json.dumps({"type": "state", "delay": self.delay, **self.state.snapshot()})]
-            if car:
-                msgs.append(json.dumps({"type": "car", "samples": car}))
-            if pos:
-                msgs.append(json.dumps({"type": "pos", "samples": pos}))
-            for ws in list(self.clients):
+            now = loop.time()
+            self.history.append((now, json.dumps({"type": "state", **self.state.snapshot()}), car, pos))
+            for ws, c in list(self.clients.items()):
                 try:
-                    for m in msgs:
-                        await ws.send_str(m)
+                    await self._push(ws, c, now)
                 except Exception:  # noqa: BLE001
-                    self.clients.discard(ws)
+                    self.clients.pop(ws, None)
+
+    async def _push(self, ws, c: dict, now: float):
+        """Manda al client lo snapshot e la telemetria fino a ``now - delay``."""
+        target = now - c["delay"]
+        latest = None
+        car, pos = [], []
+        for t, snap, cs, ps in self.history:
+            if t > target:
+                break
+            if t > c["sent_state"]:
+                latest = (t, snap)
+            if t > c["sent_tel"]:
+                car.extend(cs)
+                pos.extend(ps)
+                c["sent_tel"] = t
+        if latest:
+            c["sent_state"] = latest[0]
+            await ws.send_str(latest[1])
+        if car:
+            await ws.send_str(json.dumps({"type": "car", "samples": car}))
+        if pos:
+            await ws.send_str(json.dumps({"type": "pos", "samples": pos}))
 
     async def ws_handler(self, request: web.Request):
         ws = web.WebSocketResponse(heartbeat=20, max_msg_size=0)
         await ws.prepare(request)
-        self.clients.add(ws)
         try:
-            await ws.send_str(json.dumps({"type": "state", "delay": self.delay, **self.state.snapshot()}))
+            delay = max(0.0, min(HISTORY - 1, float(request.query.get("delay", 0) or 0)))
+        except ValueError:
+            delay = 0.0
+        loop = asyncio.get_event_loop()
+        c = {"delay": delay, "sent_state": 0.0, "sent_tel": loop.time() - delay}
+        self.clients[ws] = c
+        try:
             history = {n: list(s) for n, s in self.state.telemetry.items()}
             await ws.send_str(json.dumps({"type": "car_history", "drivers": history}))
             await ws.send_str(json.dumps({"type": "pos", "samples": [{"n": n, **p} for n, p in self.state.positions.items()]}))
+            if delay == 0 or not self.history:
+                await ws.send_str(json.dumps({"type": "state", **self.state.snapshot()}))
+                c["sent_state"] = loop.time()
+            else:
+                await self._push(ws, c, loop.time())
             async for msg in ws:
                 if msg.type in (WSMsgType.CLOSE, WSMsgType.ERROR):
                     break
                 if msg.type == WSMsgType.TEXT:
-                    self.on_client_message(msg.data)
+                    self.on_client_message(c, msg.data)
         finally:
-            self.clients.discard(ws)
+            self.clients.pop(ws, None)
         return ws
 
-    def on_client_message(self, raw: str):
-        """Comandi dal browser: {"pit_loss": 21.5|null}, {"delay": 12}."""
+    def on_client_message(self, c: dict, raw: str):
+        """Comandi dal browser: {"delay": 12} — ritardo in secondi, solo per quel browser."""
         try:
             cmd = json.loads(raw)
         except ValueError:
             return
-        if "pit_loss" in cmd:
-            v = cmd["pit_loss"]
-            self.state.pit_loss_override = float(v) if v is not None else None
         if "delay" in cmd:
             try:
-                self.delay = max(0.0, float(cmd["delay"] or 0))
+                c["delay"] = max(0.0, min(HISTORY - 1, float(cmd["delay"] or 0)))
+                c["sent_state"] = 0.0  # rimanda subito lo snapshot al nuovo istante
             except (TypeError, ValueError):
                 pass
 
@@ -182,7 +197,7 @@ def make_app(feed) -> web.Application:
     app.router.add_static("/web", WEB_DIR)
 
     async def start_tasks(app):
-        app["tasks"] = [asyncio.create_task(hub.ingest()), asyncio.create_task(hub.apply_loop()), asyncio.create_task(hub.broadcast())]
+        app["tasks"] = [asyncio.create_task(hub.ingest()), asyncio.create_task(hub.broadcast())]
 
     async def stop_tasks(app):
         for t in app["tasks"]:

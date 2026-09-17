@@ -15,14 +15,17 @@
   const prefs = {
     follow: store("follow", ""), favs: store("favs", []), telDrivers: store("telDrivers", []),
     panels: store("panels", {}), metrics: store("metrics", false), autoplay: store("autoplay", true), chime: store("chime", false),
-    delay: store("delay", 0),
+    delay: store("delay", 0), pitLoss: store("pitLoss", null),
   };
+  /** Pit loss in uso: quella scelta dall'utente, altrimenti quella del server (già adattata a SC/VSC). */
+  const pitLossNow = () => prefs.pitLoss ?? state.pit_loss.value;
+  const pitLossNormal = () => prefs.pitLoss ?? state.pit_loss.normal;
   const isFav = (n) => prefs.favs.includes(n);
 
   // ------------------------------------------------------------ websocket
   function connect() {
-    ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`);
-    ws.onopen = () => { $("#conn").classList.add("on"); ws.send(JSON.stringify({ delay: prefs.delay })); };
+    ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws?delay=${prefs.delay || 0}`);
+    ws.onopen = () => $("#conn").classList.add("on");
     ws.onclose = () => { $("#conn").classList.remove("on"); setTimeout(connect, 2000); };
     ws.onmessage = (ev) => {
       const m = JSON.parse(ev.data);
@@ -110,9 +113,9 @@
       if (sel.options.length !== drivers.length + 1) setOptions(sel, [["", "—"], ...drivers], prefs.telDrivers[i] ?? defaultTelDriver(i));
     });
     const pl = $("#pit-loss"), o = state.pit_loss;
-    if (document.activeElement !== pl) pl.value = o.normal;
-    $("#pit-loss-hint").textContent = `${o.source}${o.circuit ? " · " + o.circuit : ""} · SC ${o.sc} · VSC ${o.vsc}` + (o.observed_median ? ` · pit lane osservata ${o.observed_median} s` : "");
-    const dl = $("#delay"); if (document.activeElement !== dl) dl.value = state.delay ?? prefs.delay;
+    if (document.activeElement !== pl) pl.value = pitLossNormal();
+    $("#pit-loss-hint").textContent = `${prefs.pitLoss != null ? "manuale" : o.source}${o.circuit ? " · " + o.circuit : ""} · SC ${o.sc} · VSC ${o.vsc}` + (o.observed_median ? ` · pit lane osservata ${o.observed_median} s` : "");
+    const dl = $("#delay"); if (document.activeElement !== dl) dl.value = prefs.delay;
     for (const cb of document.querySelectorAll("[data-panel]")) { const on = prefs.panels[cb.dataset.panel] ?? true; cb.checked = on; $("#" + cb.dataset.panel).hidden = !on; }
     $("#opt-metrics").checked = prefs.metrics; $("#opt-autoplay").checked = prefs.autoplay; $("#opt-chime").checked = prefs.chime;
   }
@@ -182,9 +185,9 @@
     $("#battle-hint").textContent = `${me.name} · griglia ${me.grid ?? "–"} · giro veloce ${me.best || "–"}`;
     let exit = "";
     if (isRace() && !me.retired) {
-      const pl = state.pit_loss, n = pitExit(me.num, pl.normal), sc = pitExit(me.num, pl.sc);
+      const pl = state.pit_loss, n = pitExit(me.num, pitLossNormal()), sc = pitExit(me.num, pl.sc);
       const fmt = (r) => !r ? "–" : `<b>P${r.pos}</b>${r.lost > 0 ? ` (−${r.lost})` : ""}${r.behind ? `, dietro ${tlaOf(r.behind[0])} di ${r.behind[1]} s` : ""}${r.aheadOf ? `, davanti a ${tlaOf(r.aheadOf[0])} di ${r.aheadOf[1]} s` : ""}`;
-      exit = `<div class="exit">Se entra ora (${pl.value} s): ${fmt(pitExit(me.num, pl.value))}</div>` + (state.session.track === "green" ? `<div class="exit">Sotto Safety Car (${pl.sc} s): ${fmt(sc)}</div>` : `<div class="exit">In condizioni normali (${pl.normal} s): ${fmt(n)}</div>`);
+      exit = `<div class="exit">Se entra ora (${pitLossNow()} s): ${fmt(pitExit(me.num, pitLossNow()))}</div>` + (state.session.track === "green" ? `<div class="exit">Sotto Safety Car (${pl.sc} s): ${fmt(sc)}</div>` : `<div class="exit">In condizioni normali (${pitLossNormal()} s): ${fmt(n)}</div>`);
     }
     $("#battle-body").innerHTML = `<div class="battle">${whoRow(ahead, me, "ahead")}${whoRow(me, me, "me")}${whoRow(behind, me, "behind")}</div>${exit}`;
   }
@@ -192,10 +195,12 @@
   function renderWall() {
     const nums = [prefs.follow, ...prefs.favs.filter((n) => n !== prefs.follow)].filter(Boolean);
     const cards = nums.map(byNum).filter(Boolean).map((d) => {
-      const e = d.exit, deg = d.deg, u = d.undercut;
-      const exitTxt = !e ? "—" : `<span class="big ${e.positions_lost > 0 ? "warn" : "good"}">P${e.exit_position}</span> ${e.positions_lost > 0 ? `(−${e.positions_lost})` : "(nessuna posizione persa)"}`
+      const loss = pitLossNow(), e = d.retired ? null : pitExit(d.num, loss), deg = d.deg;
+      const exitTxt = !e ? "—" : `<span class="big ${e.lost > 0 ? "warn" : "good"}">P${e.pos}</span> ${e.lost > 0 ? `(−${e.lost})` : "(nessuna posizione persa)"}`
         + (e.behind ? `<br>dietro <b>${esc(tlaOf(e.behind[0]))}</b> di ${e.behind[1]} s` : "<br>in testa")
-        + (e.ahead_of ? ` · davanti a <b>${esc(tlaOf(e.ahead_of[0]))}</b> di ${e.ahead_of[1]} s` : "");
+        + (e.aheadOf ? ` · davanti a <b>${esc(tlaOf(e.aheadOf[0]))}</b> di ${e.aheadOf[1]} s` : "");
+      const back = state.drivers.find((x) => x.pos === d.pos + 1), ivb = back ? parseFloat(String(back.interval).replace("+", "")) : NaN;
+      const u = back && !isNaN(ivb) ? { by: back.tla, interval: ivb, window: ivb < loss + 3, needs_per_lap: Math.max(0, (loss - ivb) / 2).toFixed(2), tyre_delta: d.age - back.age } : null;
       const degTxt = !deg ? "servono 3 giri puliti" : `<span class="${deg.slope > 0.2 ? "bad" : deg.slope > 0.08 ? "warn" : "good"}">${deg.slope > 0 ? "+" : ""}${deg.slope.toFixed(3)} s/giro</span> su ${deg.laps} giri`;
       const uTxt = !u ? "nessuno dietro" : `<b>${esc(u.by)}</b> a ${u.interval} s: ${u.window ? '<span class="warn">in finestra</span>' : '<span class="good">fuori finestra</span>'}`
         + `<br>gli servono ${u.needs_per_lap} s/giro · gomme ${u.tyre_delta > 0 ? `mie +${u.tyre_delta} giri` : u.tyre_delta < 0 ? `sue +${-u.tyre_delta} giri` : "pari"}`;
@@ -385,7 +390,7 @@
     prefs.favs = isFav(n) ? prefs.favs.filter((x) => x !== n) : [...prefs.favs, n]; save("favs", prefs.favs); if (state) render();
   });
   document.querySelectorAll(".tel-driver").forEach((sel) => sel.addEventListener("change", () => { prefs.telDrivers = [...document.querySelectorAll(".tel-driver")].map((s) => s.value); save("telDrivers", prefs.telDrivers); if (state) renderTelemetry(); }));
-  $("#pit-loss").addEventListener("change", (e) => { const v = parseFloat(e.target.value); send({ pit_loss: isNaN(v) ? null : v }); });
+  $("#pit-loss").addEventListener("change", (e) => { const v = parseFloat(e.target.value); prefs.pitLoss = isNaN(v) ? null : v; save("pitLoss", prefs.pitLoss); if (state) render(); });
   $("#delay").addEventListener("change", (e) => { prefs.delay = Math.max(0, parseInt(e.target.value) || 0); save("delay", prefs.delay); send({ delay: prefs.delay }); });
   document.querySelectorAll("[data-panel]").forEach((cb) => cb.addEventListener("change", () => { prefs.panels[cb.dataset.panel] = cb.checked; save("panels", prefs.panels); chartKey = ""; if (state) render(); }));
   $("#opt-metrics").addEventListener("change", (e) => { prefs.metrics = e.target.checked; save("metrics", prefs.metrics); if (state) render(); });
