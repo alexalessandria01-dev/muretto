@@ -175,11 +175,14 @@ def cache_dir() -> Path:
 
 
 async def fetch_static(session: aiohttp.ClientSession, rel: str, dest: Path) -> Path | None:
-    """Scarica ``static/<rel>`` in ``dest`` (una volta sola). None se 404."""
+    """Scarica ``static/<rel>`` in ``dest`` (una volta sola). None se il file non c'è.
+
+    Per un canale che la sessione non ha (es. LapCount nelle libere) il server
+    della F1 risponde 403, non 404: vanno trattati allo stesso modo."""
     if dest.exists():
         return dest
     async with session.get(STATIC_BASE + rel) as r:
-        if r.status == 404:
+        if r.status in (403, 404):
             return None
         r.raise_for_status()
         dest.parent.mkdir(parents=True, exist_ok=True)

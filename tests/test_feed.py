@@ -43,3 +43,28 @@ def test_split_frames_signalr():
     frames = split_frames(raw)
     assert len(frames) == 2
     assert frames[1]["arguments"][0] == "TrackStatus"
+
+
+def test_fetch_static_treats_403_as_missing(tmp_path):
+    # il server F1 risponde 403 per i canali che una sessione non ha (es. LapCount nelle libere)
+    import asyncio
+    from aiohttp import web
+    from aiohttp.test_utils import TestServer
+    import aiohttp
+    from muretto import feed
+
+    async def run():
+        app = web.Application()
+        app.router.add_get("/static/{tail:.*}", lambda r: web.Response(status=403))
+        server = TestServer(app)
+        await server.start_server()
+        old = feed.STATIC_BASE
+        feed.STATIC_BASE = str(server.make_url("/static/"))
+        try:
+            async with aiohttp.ClientSession() as s:
+                return await feed.fetch_static(s, "x/LapCount.jsonStream", tmp_path / "LapCount.jsonStream")
+        finally:
+            feed.STATIC_BASE = old
+            await server.close()
+
+    assert asyncio.run(run()) is None
