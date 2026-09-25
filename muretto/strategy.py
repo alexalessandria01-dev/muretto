@@ -117,21 +117,30 @@ def degradation(laps: list[tuple[int, float, bool]]) -> dict | None:
             "intercept": round(intercept, 3), "laps": len(pts), "last_clean": pts[-1][1]}
 
 
-def undercut_threat(interval_behind: float | None, pit_loss: float, my_tyre_age: int, their_tyre_age: int, margin: float = 3.0) -> dict | None:
-    """Il pilota dietro è nella finestra per farmi l'undercut?
+UNDERCUT_GAIN = 0.8  # s/giro che vale una gomma nuova rispetto a una usata: valore di partenza fisso
+UNDERCUT_LAPS = 2    # giri in cui si gioca l'undercut: l'out-lap di chi entra e l'in-lap di chi sta davanti
 
-    È "in finestra" se, entrando ora, rientrerebbe entro ``margin`` secondi da me
-    (``interval < pit_loss + margin``). ``needs_per_lap`` = quanto deve guadagnare
-    al giro con gomma nuova per passarmi in un out-lap + in-lap.
+
+def undercut_threat(interval_behind: float | None, my_tyre_age: int, their_tyre_age: int,
+                    gain: float = UNDERCUT_GAIN, laps: int = UNDERCUT_LAPS) -> dict | None:
+    """Il pilota dietro può farmi l'undercut?
+
+    La sosta la pagano tutti e due, quindi non conta: conta se la gomma nuova gli fa recuperare
+    il distacco nei giri in cui io sono ancora fuori. Rischio alto se il distacco è sotto il
+    60% di quel guadagno, medio sotto il 100%, altrimenti basso (fuori finestra).
+    Prima si confrontava il distacco con tutta la sosta (~27 s a Monza): "in finestra" nel 98%
+    dei casi, anche con 23 s di distacco.
     """
     if interval_behind is None:
         return None
-    window = interval_behind < pit_loss + margin
-    needs = max(0.0, (pit_loss - interval_behind) / 2)  # 2 giri (out-lap suo, in-lap mio)
+    reach = gain * laps
+    risk = "alto" if interval_behind < reach * 0.6 else "medio" if interval_behind < reach else "basso"
     return {
-        "window": window,
+        "window": risk != "basso",
+        "risk": risk,
         "interval": interval_behind,
-        "needs_per_lap": round(needs, 2),
+        "gain_per_lap": gain,
+        "reach": round(reach, 2),
         "tyre_delta": my_tyre_age - their_tyre_age,
     }
 

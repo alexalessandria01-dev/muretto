@@ -70,11 +70,12 @@ def test_degradation_needs_four_laps():
     assert degradation([(1, 85.0, True), (2, 85.1, True), (3, 85.2, True)]) is None
 
 
-def test_undercut_threat():
-    # chi è dietro entro pit_loss + margine e con gomma più fresca minaccia l'undercut
-    t = undercut_threat(interval_behind=1.8, pit_loss=24.0, my_tyre_age=20, their_tyre_age=5)
-    assert t["window"] is True
-    assert t["needs_per_lap"] > 0
+def test_undercut_threat_levels():
+    assert undercut_threat(interval_behind=0.6, my_tyre_age=20, their_tyre_age=5)["risk"] == "alto"
+    assert undercut_threat(interval_behind=1.3, my_tyre_age=20, their_tyre_age=5)["risk"] == "medio"
+    far = undercut_threat(interval_behind=23.0, my_tyre_age=20, their_tyre_age=5)
+    assert far["risk"] == "basso" and far["window"] is False  # prima risultava "in finestra"
+    assert undercut_threat(interval_behind=None, my_tyre_age=1, their_tyre_age=1) is None
 
 
 def test_compound_rule_needs_two_dry_compounds():

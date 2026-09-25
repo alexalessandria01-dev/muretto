@@ -450,6 +450,7 @@ class RaceState:
                 "gap": gap_txt or "",
                 "gap_s": 0.0 if pos == 1 and not line.get("GapToLeader") else strategy.gap_seconds(line.get("GapToLeader")),
                 "interval": int_txt or "",
+                "interval_s": strategy.gap_seconds(int_txt) if int_txt else None,
                 "catching": bool((line.get("IntervalToPositionAhead") or {}).get("Catching")),
                 "last": last.get("Value", ""),
                 "last_pf": bool(last.get("PersonalFastest")),
@@ -500,7 +501,7 @@ class RaceState:
             r["undercut"] = None
             if behind and not r["retired"]:
                 iv = strategy.gap_seconds(behind["interval"]) if behind["interval"] else None
-                r["undercut"] = strategy.undercut_threat(iv, pit_loss, r["age"], behind["age"])
+                r["undercut"] = strategy.undercut_threat(iv, r["age"], behind["age"])
                 if r["undercut"]:
                     r["undercut"]["by"] = behind["tla"]
 
