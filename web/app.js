@@ -116,7 +116,9 @@
     $("#session-title").textContent = [s.meeting, s.name, s.circuit].filter(Boolean).join(" · ");
     const ts = $("#track-status"); ts.className = `pill ${s.track}`; ts.textContent = TRACK_LABEL[s.track] || s.track_msg;
     $("#lap").textContent = isRace() ? (s.lap ? `${s.lap}${s.total_laps ? " / " + s.total_laps : ""}` : "–") : (s.part ? `${s.name} · Q${s.part}` : s.name || "–");
-    $("#remaining").textContent = s.remaining || "–";
+    // a tempo scaduto le macchine chiudono l'ultimo giro: "00:00:00" con le auto in pista confonde
+    $("#remaining").textContent = ["Finished", "Finalised", "Ends"].includes(s.status) ? "finita"
+      : s.status === "Aborted" ? "sospesa" : s.remaining || "–";
     $("#w-air").textContent = w.air ? `${w.air}°` : "–";
     $("#w-track").textContent = w.track ? `${w.track}°` : "–";
     $("#w-wind").textContent = w.wind ? `${w.wind} m/s${w.wind_dir ? " " + windArrow(w.wind_dir) : ""}` : "–";
