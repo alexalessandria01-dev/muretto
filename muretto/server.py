@@ -17,8 +17,12 @@ from pathlib import Path
 import aiohttp
 from aiohttp import WSMsgType, web
 
-from .feed import STATIC_BASE, ArchiveFeed
-from .state import RaceState
+import re
+from dataclasses import asdict
+
+from . import calibration, compare, radio
+from .feed import STATIC_BASE, ArchiveFeed, cache_dir, download_session, season_index
+from .state import Lap, RaceState
 
 log = logging.getLogger(__name__)
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
@@ -46,12 +50,21 @@ async def fetch_circuit(key: int, year: int) -> dict:
 
 
 class Hub:
+    PUSH_TIMEOUT = 5.0  # secondi concessi a un telefono per ricevere un aggiornamento
+
     def __init__(self, feed):
         self.feed = feed
         self.state = RaceState()
         self.clients: dict[web.WebSocketResponse, dict] = {}  # ws -> {"delay", "sent_state", "sent_tel"}
         self.history: deque = deque(maxlen=int(HISTORY / TICK))  # (t, snapshot_json, car, pos)
         self._circuit_path: str | None = None
+        self._cmp_cache: dict[str, compare.Session] = {}  # sessioni d'archivio lette per il confronto giri
+        self._cmp_locks: dict[str, asyncio.Lock] = {}
+        self.transcriber = radio.Transcriber()  # team radio → testo, con whisper se c'è
+        if self.transcriber.enabled:
+            self.state.radio_text = self.transcriber.results
+        self._laps_saved = 0      # giri già scritti su disco
+        self._laps_loaded = False  # storico ripreso (una volta, al primo snapshot)
 
     async def ingest(self):
         async for topic, data, ts in self.feed:
@@ -59,10 +72,24 @@ class Hub:
                 self.state.apply(topic, data, ts)
                 if isinstance(self.feed, ArchiveFeed):
                     self.state.replay_position = ts
+                if topic in ("SessionInfo", "__snapshot__", "TeamRadio"):
+                    self._queue_radio()
                 if topic in ("SessionInfo", "__snapshot__"):
                     self._maybe_load_circuit()
+                    if not self._laps_loaded:
+                        self._laps_loaded = True
+                        self._load_laps()
             except Exception:  # noqa: BLE001 - un messaggio storto non deve fermare il feed
                 log.exception("errore applicando %s", topic)
+
+    def _queue_radio(self):
+        """Mette in coda di trascrizione i radio della sessione non ancora trascritti."""
+        info = self.state.data.get("SessionInfo") or {}
+        self.transcriber.use_session(info.get("Path"))
+        caps = self.state.data.get("TeamRadio", {}).get("Captures") or []
+        for c in (caps.values() if isinstance(caps, dict) else caps):
+            if isinstance(c, dict) and c.get("Path") and info.get("Path"):
+                self.transcriber.enqueue(info["Path"] + c["Path"])
 
     def _maybe_load_circuit(self):
         info = self.state.data.get("SessionInfo") or {}
@@ -80,19 +107,84 @@ class Hub:
             log.info("circuito %s: pit loss %s", self.state.circuit_info.get("name"), self.state.circuit_info.get("pit_loss"))
         except Exception as e:  # noqa: BLE001
             log.warning("MultiViewer non raggiungibile (%s): uso la tabella pit loss e la mappa dai GPS", e)
+            return
+        # in diretta il GPS non arriva: si impara dove stanno le macchine da una sessione già finita
+        if not isinstance(self.feed, ArchiveFeed) and self.state.circuit_info.get("map", {}).get("x"):
+            asyncio.create_task(self._calibrate(key, year, self._circuit_path or ""))
+
+    async def _calibrate(self, key: int, year: int, path: str):
+        try:
+            cal = await calibration.calibrate(self.state.circuit_info["map"], path, key, year)
+        except Exception:  # noqa: BLE001 - senza calibrazione la pagina stima comunque, a grandi linee
+            log.exception("calibrazione delle posizioni stimate fallita")
+            return
+        if cal and path == self._circuit_path:
+            self.state.circuit_info["map"]["seg_points"] = cal
+            self.state.circuit_info["rev"] = self.state.circuit_info.get("rev", 0) + 1
 
     async def broadcast(self):
+        """Ogni TICK: snapshot nello storico e invio a tutti i telefoni.
+
+        Un errore nello snapshot salta quel giro invece di fermare per sempre gli aggiornamenti,
+        e i telefoni si servono in parallelo con un tempo limite: uno lento (o col WiFi che va
+        e viene) non deve far aspettare gli altri."""
         loop = asyncio.get_event_loop()
         while True:
             await asyncio.sleep(TICK)
-            car, pos = self.state.drain_telemetry()
-            now = loop.time()
-            self.history.append((now, json.dumps({"type": "state", **self.state.snapshot()}), car, pos))
-            for ws, c in list(self.clients.items()):
-                try:
-                    await self._push(ws, c, now)
-                except Exception:  # noqa: BLE001
+            try:
+                car, pos = self.state.drain_telemetry()
+                now = loop.time()
+                self.history.append((now, json.dumps({"type": "state", **self.state.snapshot()}), car, pos))
+            except Exception:  # noqa: BLE001
+                log.exception("snapshot non riuscito, riprovo al prossimo giro")
+                continue
+            self._save_laps()
+            clients = list(self.clients.items())
+            results = await asyncio.gather(*(asyncio.wait_for(self._push(ws, c, now), self.PUSH_TIMEOUT) for ws, c in clients),
+                                           return_exceptions=True)
+            for (ws, _), r in zip(clients, results):
+                if isinstance(r, Exception):  # troppo lento o già chiuso: la pagina si ricollega da sola
                     self.clients.pop(ws, None)
+                    asyncio.create_task(ws.close())
+
+    # ------------------------------------------------------------ storico dei giri su disco
+    def _laps_file(self) -> Path | None:
+        path = (self.state.data.get("SessionInfo") or {}).get("Path")
+        return cache_dir() / "live" / (path.strip("/").replace("/", "__") + ".json") if path else None
+
+    def _save_laps(self):
+        """Lo storico dei giri serve a degrado, battaglie e gap: se il server riparte a metà gara
+        la F1 rimanda lo stato attuale ma non i giri passati. Si salva a ogni giro nuovo."""
+        total = sum(len(v) for v in self.state.laps.values())
+        if isinstance(self.feed, ArchiveFeed) or total == self._laps_saved:
+            return
+        f = self._laps_file()
+        if not f:
+            return
+        try:
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(json.dumps({num: [asdict(l) for l in laps] for num, laps in self.state.laps.items()}))
+            self._laps_saved = total
+        except OSError as e:
+            log.warning("storico giri non salvato: %s", e)
+
+    def _load_laps(self):
+        f = self._laps_file()
+        if not f or not f.exists() or isinstance(self.feed, ArchiveFeed):
+            return
+        try:
+            saved = json.loads(f.read_text())
+        except (OSError, ValueError) as e:
+            log.warning("storico giri illeggibile: %s", e)
+            return
+        n = 0
+        for num, laps in saved.items():
+            have = {l.lap for l in self.state.laps.get(num, [])}
+            old = [Lap(**l) for l in laps if l["lap"] not in have]
+            self.state.laps[num] = sorted(old + list(self.state.laps.get(num, [])), key=lambda l: l.lap)
+            n += len(old)
+        self._laps_saved = sum(len(v) for v in self.state.laps.values())
+        log.info("storico giri ripreso dal disco: %d giri", n)
 
     async def _push(self, ws, c: dict, now: float):
         """Manda al client lo snapshot e la telemetria fino a ``now - delay``."""
@@ -117,7 +209,10 @@ class Hub:
             await ws.send_str(json.dumps({"type": "pos", "samples": pos}))
 
     async def ws_handler(self, request: web.Request):
-        ws = web.WebSocketResponse(heartbeat=20, max_msg_size=0)
+        # compressione del WebSocket (permessage-deflate, la negoziano da soli i browser): a fine gara
+        # lo stato pesa ~110 KB due volte al secondo, compresso ~20 KB. Per un telefono per due ore
+        # sono 1,6 GB contro 0,3
+        ws = web.WebSocketResponse(heartbeat=20, max_msg_size=0, compress=True)
         await ws.prepare(request)
         try:
             delay = max(0.0, min(HISTORY - 1, float(request.query.get("delay", 0) or 0)))
@@ -160,6 +255,61 @@ class Hub:
     async def api_state(self, _request):
         return web.json_response(self.state.snapshot())
 
+    # ------------------------------------------------------------ confronto giri (archivio)
+    _SESSION_PATH = re.compile(r"^\d{4}/[\w-]+/[\w-]+/?$")
+
+    async def api_sessions(self, _request):
+        """Sessioni dello stesso weekend già in archivio: quelle su cui si possono confrontare i giri."""
+        info = self.state.data.get("SessionInfo") or {}
+        path = info.get("Path") or ""
+        meeting = (info.get("Meeting") or {}).get("Key")
+        out = []
+        if path[:4].isdigit() and meeting:
+            try:
+                idx = await season_index(int(path[:4]))
+            except Exception as e:  # noqa: BLE001
+                log.warning("indice della stagione non disponibile: %s", e)
+                idx = {}
+            for m in idx.get("Meetings", []):
+                if m.get("Key") == meeting:
+                    out = [{"path": s["Path"], "name": s.get("Name", "")} for s in m.get("Sessions", []) if s.get("Path")]
+        if isinstance(self.feed, ArchiveFeed) and path and all(o["path"] != path for o in out):
+            out.append({"path": path, "name": info.get("Name", "") + " (replay)"})
+        return web.json_response(out)
+
+    async def _compare_session(self, path: str) -> compare.Session:
+        """Scarica (una volta) e legge la sessione. Ne tiene in memoria al massimo tre."""
+        async with self._cmp_locks.setdefault(path, asyncio.Lock()):
+            track_map = (self.state.circuit_info or {}).get("map")
+            cached = self._cmp_cache.get(path)
+            # letta nei primi secondi dopo l'avvio, prima che arrivasse il tracciato: va riletta
+            if cached is not None and cached.track is None and track_map and track_map.get("x"):
+                del self._cmp_cache[path]
+            if path not in self._cmp_cache:
+                folder = await download_session(path, compare.TOPICS)
+                self._cmp_cache[path] = await asyncio.to_thread(compare.Session, folder, (self.state.circuit_info or {}).get("map"))
+                while len(self._cmp_cache) > 3:
+                    self._cmp_cache.pop(next(iter(self._cmp_cache)))
+            return self._cmp_cache[path]
+
+    async def api_laps(self, request: web.Request):
+        path = request.query.get("path", "")
+        if not self._SESSION_PATH.match(path):
+            raise web.HTTPBadRequest(text="sessione non valida")
+        try:
+            sess = await self._compare_session(path)
+        except aiohttp.ClientError as e:
+            raise web.HTTPBadGateway(text=f"archivio F1 non raggiungibile: {e}")
+        return web.json_response({"drivers": sess.best_laps()})
+
+    async def api_compare(self, request: web.Request):
+        path = request.query.get("path", "")
+        nums = [n for n in request.query.get("drivers", "").split(",") if n.isdigit()][:3]
+        if not self._SESSION_PATH.match(path) or not nums:
+            raise web.HTTPBadRequest(text="sessione o piloti non validi")
+        sess = await self._compare_session(path)
+        return web.json_response(await asyncio.to_thread(compare.compare, sess, nums))
+
     async def api_map(self, _request):
         return web.json_response(self.state.circuit_info.get("map") or {})
 
@@ -193,11 +343,15 @@ def make_app(feed) -> web.Application:
     app.router.add_get("/ws", hub.ws_handler)
     app.router.add_get("/api/state", hub.api_state)
     app.router.add_get("/api/map", hub.api_map)
+    app.router.add_get("/api/sessions", hub.api_sessions)
+    app.router.add_get("/api/laps", hub.api_laps)
+    app.router.add_get("/api/compare", hub.api_compare)
     app.router.add_get("/audio", hub.audio)
     app.router.add_static("/web", WEB_DIR)
 
     async def start_tasks(app):
-        app["tasks"] = [asyncio.create_task(hub.ingest()), asyncio.create_task(hub.broadcast())]
+        app["tasks"] = [asyncio.create_task(hub.ingest()), asyncio.create_task(hub.broadcast()),
+                        asyncio.create_task(hub.transcriber.run())]
 
     async def stop_tasks(app):
         for t in app["tasks"]:

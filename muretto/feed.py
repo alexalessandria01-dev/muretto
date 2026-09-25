@@ -48,6 +48,12 @@ TOPICS = [
     "TeamRadio",
     "CarData.z",
     "Position.z",
+    # LapSeries arriva sempre; gli altri tre solo in gara (verificati nell'archivio,
+    # in diretta senza abbonamento da confermare alla prima gara)
+    "PitStopSeries",
+    "ChampionshipPrediction",
+    "OvertakeSeries",
+    "LapSeries",
 ]
 
 
@@ -118,7 +124,10 @@ class LiveFeed:
         async with aiohttp.ClientSession() as session:
             token, cookie = await self._negotiate(session)
             headers = {"User-Agent": "BestHTTP", "Accept-Encoding": "gzip,identity", "Cookie": cookie}
-            async with session.ws_connect(f"wss://{self.base}?id={token}", headers=headers, heartbeat=None) as ws:
+            # receive_timeout: la F1 manda un ping ogni ~16 s; se per 45 s non arriva niente il collegamento
+            # è appeso a metà e senza limite non ci si riconnetterebbe mai più
+            async with session.ws_connect(f"wss://{self.base}?id={token}", headers=headers, heartbeat=None,
+                                          receive_timeout=45) as ws:
                 await ws.send_str(json.dumps({"protocol": "json", "version": 1}) + RECORD_SEP)
                 hs = await ws.receive()
                 if hs.type != aiohttp.WSMsgType.TEXT or json.loads(hs.data.rstrip(RECORD_SEP) or "{}").get("error"):
@@ -169,11 +178,14 @@ def cache_dir() -> Path:
 
 
 async def fetch_static(session: aiohttp.ClientSession, rel: str, dest: Path) -> Path | None:
-    """Scarica ``static/<rel>`` in ``dest`` (una volta sola). None se 404."""
+    """Scarica ``static/<rel>`` in ``dest`` (una volta sola). None se il file non c'è.
+
+    Per un canale che la sessione non ha (es. LapCount nelle libere) il server
+    della F1 risponde 403, non 404: vanno trattati allo stesso modo."""
     if dest.exists():
         return dest
     async with session.get(STATIC_BASE + rel) as r:
-        if r.status == 404:
+        if r.status in (403, 404):
             return None
         r.raise_for_status()
         dest.parent.mkdir(parents=True, exist_ok=True)

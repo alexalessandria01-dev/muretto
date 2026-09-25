@@ -13,6 +13,9 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
+import shutil
+import subprocess
 import sys
 
 from .feed import ArchiveFeed, LiveFeed, download_session, season_index, ts_to_seconds
@@ -52,6 +55,11 @@ def cmd_replay(args):
 
 
 def cmd_live(args):
+    # il Mac va in stop dopo 1 minuto di inattività e la pagina sul telefono si ferma: caffeinate lo
+    # tiene sveglio finché questo processo è vivo (-w), e si chiude da solo quando si esce
+    if shutil.which("caffeinate"):
+        subprocess.Popen(["caffeinate", "-i", "-w", str(os.getpid())])
+        logging.getLogger(__name__).info("Mac tenuto sveglio finché gira il live (caffeinate)")
     serve(LiveFeed(), port=args.port)
 
 

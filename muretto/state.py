@@ -8,10 +8,11 @@ dall'ultima chiamata.
 
 from __future__ import annotations
 
+import statistics
 from collections import defaultdict, deque
 from dataclasses import dataclass
 
-from . import strategy
+from . import radio, stewards, strategy
 from .feed import STATIC_BASE
 
 TRACK_STATUS = {"1": "green", "2": "yellow", "4": "sc", "5": "red", "6": "vsc", "7": "vsc_ending"}
@@ -24,6 +25,13 @@ def merge(base, delta):
     """Fusione ricorsiva in stile F1: dict su dict, dict-indice su liste, scalari sostituiti."""
     for k, v in delta.items():
         if k == "_kf":
+            continue
+        if k == "_deleted":
+            # la F1 toglie voci così: {"PitTimes": {"_deleted": ["23"]}}. Ignorarlo lasciava in scheda
+            # per sempre i "30:46 min" di pit lane della bandiera rossa di Monza
+            for key in v if isinstance(v, list) else [v]:
+                if isinstance(base, dict):
+                    base.pop(str(key), None)
             continue
         cur = base.get(k)
         if isinstance(v, dict) and isinstance(cur, dict):
@@ -66,6 +74,10 @@ class Lap:
 class RaceState:
     def __init__(self):
         self.reset()
+        # testi dei radio (radio.Transcriber.results), messo dal server; None = trascrizione spenta.
+        # Fuori da reset(): la cache è per sessione e la gestisce il Transcriber
+        self.radio_text: dict | None = None
+        self._in_snapshot = False  # fuori da reset(): uno snapshot con sessione nuova chiama reset() a metà
 
     def reset(self):
         self.data: dict = {}
@@ -79,14 +91,57 @@ class RaceState:
         self._lap_start: dict[str, float] = {}
         self.replay_position: float | None = None
         self.circuit_info: dict = {}  # da MultiViewer: pit_loss {normal, sc, vsc}, tracciato, curve
+        self.last_ts: float = 0.0     # istante dell'ultimo messaggio, nel tempo del feed
+        self._clock_at: float | None = None  # quando è arrivato l'ultimo ExtrapolatedClock
+        self._utc_samples: deque = deque(maxlen=30)  # tempo del feed − UTC (Heartbeat, direzione gara, radio)
+        self._last_utc_ts: float | None = None
+        self._pit_lane: dict[str, list[dict]] = defaultdict(list)  # passaggi in pit lane, anche quelli già cancellati dalla F1
 
     # ------------------------------------------------------------------ ingresso
 
     def apply(self, topic: str, data, ts: float):
+        self.last_ts = ts
         if topic == "__snapshot__":
-            for t, d in data.items():
-                self.apply(t, d, ts)
+            self._in_snapshot = True
+            try:
+                self._apply_snapshot(data, ts)
+            finally:
+                self._in_snapshot = False
             return
+        self._apply_one(topic, data, ts)
+
+    def _apply_snapshot(self, data, ts: float):
+        # SessionInfo per primo: se cambia sessione azzera lo stato, e non deve cancellare
+        # quello che è appena arrivato nello stesso snapshot
+        for t, d in sorted(data.items(), key=lambda kv: kv[0] != "SessionInfo"):
+            self._apply_one(t, d, ts)
+
+    def _utc_sample(self, ts: float, utc: str | None):
+        """Un campione di (tempo del feed − UTC). Uno solo per istante: a fine archivio di Monza
+        arrivano ~80 Heartbeat con lo stesso tempo e orari UTC diversi (lo scarto derivava di
+        20 minuti e i radio finivano 13 giri indietro)."""
+        u = radio._utc(utc if not utc or utc.endswith("Z") else utc + "Z")
+        if u is None or ts == self._last_utc_ts:
+            return
+        self._last_utc_ts = ts
+        self._utc_samples.append(ts - u)
+
+    @property
+    def utc_offset(self) -> float | None:
+        return statistics.median(self._utc_samples) if self._utc_samples else None
+
+    def _apply_one(self, topic: str, data, ts: float):
+        # scarto fra tempo del feed e UTC, per mettere i radio sul giro giusto
+        if topic == "Heartbeat" and isinstance(data, dict):
+            self._utc_sample(ts, data.get("Utc"))
+        elif topic in ("RaceControlMessages", "TeamRadio") and not self._in_snapshot and isinstance(data, dict):
+            # i messaggi vecchi che arrivano tutti insieme nello snapshot hanno un Utc lontano da ts: esclusi
+            items = data.get("Messages") or data.get("Captures") or []
+            for m in (items.values() if isinstance(items, dict) else items):
+                if isinstance(m, dict):
+                    self._utc_sample(ts, m.get("Utc"))
+        if topic == "ExtrapolatedClock":
+            self._clock_at = ts
         if topic == "SessionInfo":
             new_path = (data or {}).get("Path")
             old_path = self.data.get("SessionInfo", {}).get("Path")
@@ -102,6 +157,8 @@ class RaceState:
             self._status_log.append((ts, str(data["Status"])))
         if topic == "TimingData":
             self._track_laps(data, ts)
+        if topic == "PitLaneTimeCollection":
+            self._record_pit_lane(data)
         if isinstance(data, dict):
             merge(self.data.setdefault(topic, {}), data)
         else:
@@ -129,6 +186,11 @@ class RaceState:
                 continue
             if d.get("InPit") or d.get("PitOut"):
                 self._pit_flag[num] = True
+            # sosta vista solo dal contatore (per esempio dopo un buco di rete: lo snapshot arriva a pilota
+            # già uscito, senza InPit/PitOut). Senza, il degrado mescola due stint (a Monza -1,33 invece di -0,07)
+            prev_line = self.data.get("TimingData", {}).get("Lines", {}).get(num) or {}
+            if (d.get("NumberOfPitStops") or 0) > (prev_line.get("NumberOfPitStops") or 0):
+                self._pit_flag[num] = True
             n = d.get("NumberOfLaps")
             if n is None:
                 continue
@@ -150,9 +212,14 @@ class RaceState:
                 position = int(d.get("Position") or cur_line.get("Position") or 0) or None
             except ValueError:
                 position = None
+            gap_s = strategy.gap_seconds(gap_txt)
+            if gap_s is None and position == 1:
+                gap_s = 0.0
             self.laps[num].append(Lap(lap=n, seconds=secs, track_status=status, clean=clean, pit=pit, ts=ts,
-                                      gap_s=strategy.gap_seconds(gap_txt), position=position))
-            self._pit_flag[num] = False
+                                      gap_s=gap_s, position=position))
+            # PitOut nello stesso messaggio del giro chiuso: il giro che comincia ora è l'uscita dai box
+            # (nelle libere di Baku 62 volte in FP2: giri da 7 minuti risultavano "puliti")
+            self._pit_flag[num] = bool(d.get("PitOut"))
             self._lap_start[num] = ts
 
     def _apply_car(self, data, ts: float):
@@ -208,13 +275,206 @@ class RaceState:
         return [(l.lap, l.seconds, l.clean) for l in hist[start:] if l.seconds]
 
     def observed_pit_losses(self) -> list[float]:
-        plc = self.data.get("PitLaneTimeCollection", {}).get("PitTimes") or {}
+        """Tutti i passaggi in pit lane visti nella sessione (la F1 li cancella poco dopo)."""
+        return [p["seconds"] for passes in self._pit_lane.values() for p in passes]
+
+    @staticmethod
+    def _hms_to_s(v) -> float | None:
+        try:
+            h, m, s = (float(x) for x in str(v).split(":"))
+        except ValueError:
+            return None
+        return h * 3600 + m * 60 + s
+
+    @staticmethod
+    def _s_to_hms(s: float) -> str:
+        s = max(0, int(s))
+        return f"{s // 3600:02d}:{s // 60 % 60:02d}:{s % 60:02d}"
+
+    def remaining(self) -> str:
+        """Tempo che resta. La F1 lo manda una volta sola con ``Extrapolating``:
+        da lì in poi il conto alla rovescia tocca a noi, altrimenti resta fermo."""
+        clock = self.data.get("ExtrapolatedClock", {})
+        left = clock.get("Remaining", "")
+        if not clock.get("Extrapolating") or self._clock_at is None:
+            return left
+        base = self._hms_to_s(left)
+        if base is None:
+            return left
+        return self._s_to_hms(base - (self.last_ts - self._clock_at))
+
+    def pit_times(self) -> dict[str, dict]:
+        """Ultimo passaggio in pit lane per pilota: quello vero della sessione, non la stima.
+        Esclusi quelli da bandiera rossa (ore ferme in pit lane, non un pit stop)."""
+        out = {}
+        for num, passes in self._pit_lane.items():
+            real = [p for p in passes if p["seconds"] < 120]
+            if real:
+                out[num] = {"duration": real[-1]["duration"], "lap": real[-1]["lap"]}
+        return out
+
+    def _record_pit_lane(self, data):
+        """PitLaneTimeCollection: la F1 manda ogni passaggio e lo cancella poco dopo (_deleted).
+        Si tiene qui, altrimenti a metà gara non resterebbe niente da mostrare."""
+        for num, v in ((data or {}).get("PitTimes") or {}).items():
+            if num == "_deleted" or not isinstance(v, dict) or not v.get("Duration"):
+                continue
+            secs = strategy.lap_time_seconds(str(v["Duration"]))
+            passes = self._pit_lane[str(num)]
+            if secs and not any(p["lap"] == v.get("Lap") and p["duration"] == v["Duration"] for p in passes):
+                passes.append({"duration": v["Duration"], "lap": v.get("Lap"), "seconds": secs})
+
+    @staticmethod
+    def _items(v) -> list:
+        """Liste del feed: arrivano come lista o come dict-indice {"0": ..., "1": ...}."""
+        if isinstance(v, dict):
+            return [v[k] for k in sorted(v, key=lambda k: int(k) if str(k).isdigit() else 0)]
+        return v if isinstance(v, list) else []
+
+    def _qualifying(self, rows: list[dict], lines: dict, part: int) -> dict:
+        """Qualifica: taglio della parte in corso, margine di ognuno e previsione del giro lanciato.
+
+        - il taglio si legge da TimingData.NoEntries (a Monza 2026 [22, 16, 10]: in Q1 passano 16,
+          in Q2 10). Prima era scritto a mano a 15 e il 16° risultava eliminato;
+        - "cut_gap": per chi è dentro il margine sul primo eliminato, per chi è fuori quanto gli
+          manca per il tempo dell'ultimo che passa;
+        - "flying": appena un pilota chiude S1 (o S1+S2) di un giro nuovo la F1 svuota i settori
+          dopo; tempo previsto = settori fatti + suoi migliori settori per il resto. Solo per giri
+          veloci (entro 1,5 s dal migliore della parte) e scritta come stima.
+        """
+        no_entries = self.data.get("TimingData", {}).get("NoEntries") or []
+        cut = no_entries[part] if part < len(no_entries) else None
+
+        def part_best(num: str) -> float | None:
+            blt = (lines.get(num) or {}).get("BestLapTimes") if isinstance(lines.get(num), dict) else None
+            items = self._items(blt)
+            if part - 1 < len(items):
+                return strategy.lap_time_seconds((items[part - 1] or {}).get("Value"))
+            return None
+
+        times = {r["num"]: part_best(r["num"]) for r in rows}
+        ranked = [r for r in rows if times.get(r["num"])]
+        ranked.sort(key=lambda r: times[r["num"]])
+        fastest = times[ranked[0]["num"]] if ranked else None
+        out: dict = {"cut": cut}
+        cut_time = first_out = None
+        if cut and len(ranked) >= cut:
+            cut_time = times[ranked[cut - 1]["num"]]
+            out.update(cut_time=strategy.format_lap(cut_time), cut_tla=ranked[cut - 1]["tla"])
+            if len(ranked) > cut:
+                first_out = times[ranked[cut]["num"]]
+        for r in rows:
+            mine = times.get(r["num"])
+            r["part_best"] = strategy.format_lap(mine) if mine else ""
+            r["cut_gap"] = None
+            if cut and mine and cut_time:
+                if r["pos"] <= cut and first_out:
+                    r["cut_gap"] = round(first_out - mine, 3)   # dentro: margine sul primo eliminato
+                elif r["pos"] > cut:
+                    r["cut_gap"] = round(cut_time - mine, 3)    # fuori: negativo, quanto gli manca
+            r["flying"] = None
+            vals = [strategy.lap_time_seconds(sx.get("v")) for sx in r["sectors"]]
+            best = [strategy.lap_time_seconds(b.get("v")) for b in r["bests"]["sectors"]]
+            if len(vals) != 3 or len(best) != 3 or r["inpit"] or r["retired"] or r["knocked_out"]:
+                continue
+            done = 2 if vals[0] and vals[1] and not vals[2] else 1 if vals[0] and not vals[1] else 0
+            if not done or None in best[done:]:
+                continue
+            pred = sum(vals[:done]) + sum(best[done:])
+            # niente previsioni sui giri di lancio: serve un tempo di riferimento nella parte, un
+            # tempo previsto entro 1,5 s dal migliore e settori fatti non oltre 1 s dai suoi migliori
+            if not fastest or pred > fastest + 1.5 or sum(vals[:done]) - sum(best[:done]) > 1.0:
+                continue
+            others = [t for n, t in times.items() if t and n != r["num"]]
+            pos = 1 + sum(1 for t in others if t < min(pred, mine or pred))
+            verdict = None
+            if cut and cut_time:
+                target = cut_time if (r["pos"] > cut or not first_out) else first_out
+                verdict = "si salva" if pred < target - 0.15 else "non basta" if pred > target + 0.15 else "in bilico"
+            r["flying"] = {"after": done, "pred": strategy.format_lap(pred), "pred_s": round(pred, 3), "pos": pos, "verdict": verdict}
+        return out
+
+    def _radio_extra(self, num: str, rel: str, cap: dict, info: dict) -> dict:
+        """Giro del radio (dall'ora nel nome del file) e testo trascritto, se c'è."""
+        out: dict = {"lap": None, "text": None, "status": "spenta" if self.radio_text is None else "in trascrizione", "hot": []}
+        rec = radio.recorded_utc(cap.get("Path", ""), info.get("GmtOffset"), cap.get("Utc"))
+        offset = self.utc_offset
+        if rec is not None and offset is not None:
+            out["lap"] = radio.lap_at(self.laps.get(num, []), rec + offset)
+        done = (self.radio_text or {}).get(rel)
+        if done:
+            out.update(text=done.get("text"), hot=[{"w": w, "it": radio.HOT[w]} for w in radio.hot_words(done.get("text"))],
+                       status="errore" if done.get("error") else "rumore" if done.get("noise") else "fatta")
+        return out
+
+    def pit_stops(self) -> dict[str, list[dict]]:
+        """Soste di gara con il tempo da fermo (PitStopSeries): solo in gara."""
+        out = {}
+        for num, stops in (self.data.get("PitStopSeries", {}).get("PitTimes") or {}).items():
+            rows = []
+            for s in self._items(stops):
+                p = (s or {}).get("PitStop") or {}
+                if p:
+                    rows.append({"lap": p.get("Lap"), "stop": p.get("PitStopTime", ""), "lane": p.get("PitLaneTime", "")})
+            out[str(num)] = rows
+        return out
+
+    def overtakes(self) -> dict[str, int]:
+        """Sorpassi in pista (OvertakeSeries), doppiaggi compresi: la F1 li conta allo stesso modo.
+
+        Il campo "count" vale 1 (a volte 2) per un sorpasso, ma per alcuni piloti dopo ogni
+        sorpasso arriva una voce con count 21 (a Monza Russell: 1, 21, 1, 21...): non è un
+        sorpasso, si scarta. Verificato a Monza che dopo un evento la posizione migliora nel 74%
+        dei casi e peggiora nel 7%."""
+        out = {}
+        for num, evs in (self.data.get("OvertakeSeries", {}).get("Overtakes") or {}).items():
+            counts = [int((e or {}).get("count") or 0) for e in self._items(evs)]
+            out[str(num)] = sum(c for c in counts if 0 < c <= 3)
+        return out
+
+    def _lap_positions(self, entry) -> list[int]:
+        """Posizione a ogni giro (LapSeries): arriva anche nelle libere."""
         out = []
-        for v in plc.values():
-            if isinstance(v, dict):
-                secs = strategy.lap_time_seconds(str(v.get("Duration", "")))
-                if secs:
-                    out.append(secs)
+        for p in self._items((entry or {}).get("LapPosition")):
+            try:
+                out.append(int(p))
+            except (TypeError, ValueError):
+                out.append(None)
+        return out
+
+    def _bests(self, stat: dict, best_secs: list, best_lap: str) -> dict:
+        """Migliori settori e velocità con la posizione in classifica, e il giro teorico."""
+        sectors = [{"v": (b or {}).get("Value", ""), "pos": (b or {}).get("Position")} for b in best_secs]
+        speeds = {k.lower(): {"v": (v or {}).get("Value", ""), "pos": (v or {}).get("Position")}
+                  for k, v in (stat.get("BestSpeeds") or {}).items() if isinstance(v, dict)}
+        return {"sectors": sectors, "speeds": speeds,
+                "theoretical": strategy.theoretical_best([s["v"] for s in sectors], best_lap)}
+
+    def championship(self) -> dict:
+        """Campionato "se finisse adesso" (ChampionshipPrediction): solo in gara."""
+        cp = self.data.get("ChampionshipPrediction") or {}
+
+        def rows(d: dict, name_key: str) -> list[dict]:
+            out = []
+            for key, v in (d or {}).items():
+                if not isinstance(v, dict) or v.get("PredictedPoints") is None:
+                    continue
+                out.append({"key": str(v.get(name_key) or key), "pos": v.get("CurrentPosition"),
+                            "pred_pos": v.get("PredictedPosition"), "points": v.get("CurrentPoints"),
+                            "pred_points": v.get("PredictedPoints")})
+            return sorted(out, key=lambda r: (r["pred_pos"] or 99, -(r["pred_points"] or 0)))
+
+        return {"drivers": rows(cp.get("Drivers"), "RacingNumber"), "teams": rows(cp.get("Teams"), "TeamName")}
+
+    @staticmethod
+    def _speeds(line: dict) -> dict:
+        """Le quattro rilevazioni di velocità: due intermedie, trappola e traguardo."""
+        sp = line.get("Speeds") or {}
+        out = {}
+        for k in ("I1", "I2", "ST", "FL"):
+            v = sp.get(k) if isinstance(sp, dict) else None
+            v = v if isinstance(v, dict) else {}
+            out[k.lower()] = {"v": v.get("Value", ""), "pf": bool(v.get("PersonalFastest")), "of": bool(v.get("OverallFastest"))}
         return out
 
     def _sectors(self, line: dict) -> list[dict]:
@@ -248,10 +508,22 @@ class RaceState:
         loss_vsc = mv.get("vsc") or round(loss_normal * 0.72, 1)
         ts_data = self.data.get("TrackStatus", {})
         track = TRACK_STATUS.get(str(ts_data.get("Status", "1")), "green")
+        # gara sospesa: un minuto dopo la rossa la F1 manda "AllClear" (a Monza a 3770 s, con la gara
+        # ferma fino a 5545 s) e la pagina tornava VERDE. Conta SessionStatus
+        if self.data.get("SessionStatus", {}).get("Status") == "Aborted":
+            track = "red"
         pit_loss = loss_sc if track == "sc" else loss_vsc if track in ("vsc", "vsc_ending") else loss_normal
         session_type = info.get("Type", "")
         part = self.data.get("TimingData", {}).get("SessionPart")
         stats = self.data.get("TimingStats", {}).get("Lines", {})
+        pit_times = self.pit_times()
+        pit_stops = self.pit_stops()
+        overtakes = self.overtakes()
+        lap_series = self.data.get("LapSeries") or {}
+        rc_all = self.data.get("RaceControlMessages", {}).get("Messages") or []
+        if isinstance(rc_all, dict):
+            rc_all = [rc_all[k] for k in sorted(rc_all, key=int)]
+        steward = stewards.analyse([m for m in rc_all if isinstance(m, dict)])
 
         rows = []
         for num, drv in self.drivers.items():
@@ -292,8 +564,9 @@ class RaceState:
                 "colour": "#" + drv.get("TeamColour", "888888"),
                 "pos": pos,
                 "gap": gap_txt or "",
-                "gap_s": strategy.gap_seconds(line.get("GapToLeader")),
+                "gap_s": 0.0 if pos == 1 and not line.get("GapToLeader") else strategy.gap_seconds(line.get("GapToLeader")),
                 "interval": int_txt or "",
+                "interval_s": strategy.gap_seconds(int_txt) if int_txt else None,
                 "catching": bool((line.get("IntervalToPositionAhead") or {}).get("Catching")),
                 "last": last.get("Value", ""),
                 "last_pf": bool(last.get("PersonalFastest")),
@@ -304,12 +577,18 @@ class RaceState:
                 "age": cur.get("laps", 0),
                 "new": cur.get("new", True),
                 "stops": line.get("NumberOfPitStops", 0),
+                # soste fatte a gara sospesa (cambio gomme gratis): la F1 le conta nelle soste. Si riconoscono
+                # dal passaggio in pit lane lungo quanto la sospensione (a Monza ~1840 s); verificato su 21 piloti su 22
+                "free_stops": sum(1 for p in self._pit_lane.get(num, []) if p["seconds"] > 300),
                 "laps": line.get("NumberOfLaps", 0),
                 "inpit": bool(line.get("InPit")),
                 "pitout": bool(line.get("PitOut")),
                 "retired": bool(line.get("Retired")),
                 "stopped": bool(line.get("Stopped")),
                 "speed_trap": ((line.get("Speeds") or {}).get("ST") or {}).get("Value", ""),
+                "speeds": self._speeds(line),
+                "best_speeds": {k.lower(): (v or {}).get("Value", "") for k, v in ((stats.get(num) or {}).get("BestSpeeds") or {}).items() if isinstance(v, dict)},
+                "pit_time": pit_times.get(num, {}),
                 "stints": stints,
                 "grid": grid,
                 "gained": (grid - pos) if grid and pos < 99 else None,
@@ -317,20 +596,45 @@ class RaceState:
                 "car": {k: car.get(k) for k in ("speed", "gear", "throttle", "brake", "rpm", "drs")} if car else None,
                 "best_sector_pos": [(b or {}).get("Position") for b in best_secs] if best_secs else [],
                 "lap_history": [[l.lap, l.seconds, l.gap_s, l.position, l.clean, l.pit] for l in self.laps.get(num, [])],
+                "bests": self._bests(stats.get(num) or {}, best_secs, best.get("Value", "")),
+                "pit_stops": pit_stops.get(num, []),
+                "overtakes": overtakes.get(num, 0),
+                "compounds": strategy.compound_rule([st["compound"] for st in stints]),
+                "stewards": steward["drivers"].get(num, {"track_limits": 0, "penalties": [], "open": 0}),
+                "lap_positions": self._lap_positions(lap_series.get(num)),
             })
         rows.sort(key=lambda r: r["pos"])
+        lc = self.data.get("LapCount", {})
+        quali = self._qualifying(rows, lines, part) if part else {}
+        if session_type == "Race":
+            strategy.fill_lapped_gaps(rows)  # i doppiati hanno "1 L": il distacco si ricava dagli intervalli
 
         # strategia per tutti (il browser sceglie il team a fuoco)
         field = [(r["num"], None if r["retired"] or r["stopped"] else r["gap_s"]) for r in rows]
         by_pos = {r["pos"]: r for r in rows}
+        racing = session_type == "Race" and track in ("green", "yellow")  # con SC/VSC/rossa le previsioni non valgono
+        total_laps = lc.get("TotalLaps")
         for r in rows:
             r["exit"] = None if r["retired"] else strategy.pit_exit(r["num"], field, pit_loss)
+            # battaglia con chi sta davanti: tendenza dell'intervallo, "lo prende tra N giri", "bloccato in scia"
+            ahead = by_pos.get(r["pos"] - 1)
+            r["ahead_trend"] = r["chase"] = r["stuck"] = None
+            if session_type == "Race" and ahead and not r["retired"] and not r["stopped"]:
+                fh, bh = ahead["lap_history"], r["lap_history"]
+                r["ahead_trend"] = strategy.interval_trend(fh, bh)
+                if racing:
+                    r["chase"] = strategy.catch_forecast(fh, bh, r.get("interval_s"), total_laps)
+                    if r["chase"]:
+                        r["chase"]["on"] = ahead["tla"]
+                    n = strategy.stuck_laps(fh, bh)
+                    if n:
+                        r["stuck"] = {"behind": ahead["tla"], "laps": n}
             r["deg"] = strategy.degradation(self._current_stint_laps(r["num"])[-10:])
             behind = by_pos.get(r["pos"] + 1)
             r["undercut"] = None
             if behind and not r["retired"]:
                 iv = strategy.gap_seconds(behind["interval"]) if behind["interval"] else None
-                r["undercut"] = strategy.undercut_threat(iv, pit_loss, r["age"], behind["age"])
+                r["undercut"] = strategy.undercut_threat(iv, r["age"], behind["age"])
                 if r["undercut"]:
                     r["undercut"]["by"] = behind["tla"]
 
@@ -343,14 +647,13 @@ class RaceState:
                 num = str(c.get("RacingNumber", ""))
                 rel = info.get("Path", "") + c["Path"]
                 radio.append({"utc": c.get("Utc", ""), "num": num, "tla": self.drivers.get(num, {}).get("Tla", num),
-                              "url": STATIC_BASE + rel, "path": rel})
+                              "url": STATIC_BASE + rel, "path": rel, **self._radio_extra(num, rel, c, info)})
         rc = self.data.get("RaceControlMessages", {}).get("Messages") or []
         if isinstance(rc, dict):
             rc = [rc[k] for k in sorted(rc, key=int)]
         rc = [m for m in rc if isinstance(m, dict)][-60:]
 
         w = self.data.get("WeatherData", {})
-        lc = self.data.get("LapCount", {})
         clock = self.data.get("ExtrapolatedClock", {})
         return {
             "session": {
@@ -359,18 +662,22 @@ class RaceState:
                 "circuit": circuit,
                 "type": session_type,
                 "part": part,
+                **quali,  # taglio della parte in corso (qualifica): cut, cut_time, cut_tla
                 "path": info.get("Path", ""),
                 "status": self.data.get("SessionStatus", {}).get("Status", ""),
                 "track": track,
                 "track_msg": ts_data.get("Message", ""),
                 "lap": lc.get("CurrentLap"),
                 "total_laps": lc.get("TotalLaps"),
-                "remaining": clock.get("Remaining", ""),
+                "remaining": self.remaining(),
+                "extrapolating": bool(clock.get("Extrapolating")),
                 "replay_position": self.replay_position,
+                "map_rev": self.circuit_info.get("rev", 0),  # cambia quando arriva la calibrazione
             },
             "weather": {
                 "air": w.get("AirTemp"), "track": w.get("TrackTemp"), "humidity": w.get("Humidity"),
                 "rain": w.get("Rainfall"), "wind": w.get("WindSpeed"), "wind_dir": w.get("WindDirection"),
+                "pressure": w.get("Pressure"),
             },
             "pit_loss": {"value": pit_loss, "normal": loss_normal, "sc": loss_sc, "vsc": loss_vsc,
                          "source": "MultiViewer" if mv else "tabella",
@@ -378,4 +685,8 @@ class RaceState:
             "drivers": rows,
             "radio": radio[-40:],
             "race_control": rc,
+            "trains": strategy.trains(rows) if session_type == "Race" else [],  # gruppi di 3+ entro 1 s
+            "race_control_total": len([m for m in rc_all if isinstance(m, dict)]),
+            "incidents": steward["incidents"][-30:],
+            "championship": self.championship(),
         }

@@ -2,29 +2,64 @@
 <html lang="it">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#07090c">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Muretto">
 <title>Muretto</title>
 <link rel="stylesheet" href="/web/vendor/uPlot.min.css">
 <link rel="stylesheet" href="/web/style.css">
 </head>
-<body>
+<body data-tab="board">
 
 <header id="top">
-  <div class="brand">MURETTO <span class="sub" id="session-title">in attesa del feed…</span></div>
+  <div class="brand">
+    <span class="name">MURETTO</span>
+    <span class="sub" id="session-title">in attesa del feed…</span>
+  </div>
   <div id="track-status" class="pill green">—</div>
-  <div class="stat"><span class="k">GIRO</span><span class="v" id="lap">–</span></div>
-  <div class="stat"><span class="k">RESTANO</span><span class="v" id="remaining">–</span></div>
-  <div class="stat"><span class="k">ARIA</span><span class="v" id="w-air">–</span></div>
-  <div class="stat"><span class="k">PISTA</span><span class="v" id="w-track">–</span></div>
-  <div class="stat"><span class="k">VENTO</span><span class="v" id="w-wind">–</span></div>
-  <div class="stat"><span class="k">PIOGGIA</span><span class="v" id="w-rain">–</span></div>
-  <div class="stat" id="replay-box" hidden><span class="k">REPLAY</span><span class="v" id="replay-pos">–</span></div>
+  <div class="stat"><span class="k">Giro</span><span class="v" id="lap">–</span></div>
+  <div class="stat"><span class="k">Restano</span><span class="v" id="remaining">–</span></div>
+  <button type="button" class="stat wx-toggle" id="wx-toggle" aria-expanded="false"><span class="k">Meteo</span><span class="v" id="wx-short">–</span></button>
+  <div class="stat wx"><span class="k">Aria</span><span class="v" id="w-air">–</span></div>
+  <div class="stat wx"><span class="k">Pista</span><span class="v" id="w-track">–</span></div>
+  <div class="stat wx"><span class="k">Vento</span><span class="v" id="w-wind">–</span></div>
+  <div class="stat wx"><span class="k">Umidità</span><span class="v" id="w-hum">–</span></div>
+  <div class="stat wx"><span class="k">Pressione</span><span class="v" id="w-press">–</span></div>
+  <div class="stat wx"><span class="k">Pioggia</span><span class="v" id="w-rain">–</span></div>
+  <div class="stat" id="replay-box" hidden><span class="k">Replay</span><span class="v" id="replay-pos">–</span></div>
+  <div id="hdr-tools">
+    <button id="alerts-btn" type="button" title="tocca per suoni, vibrazione e schermo sempre acceso">Attiva avvisi</button>
+    <!-- Sincronizza con la TV: in gara tocca "TV" quando in TV cambia il contagiri;
+         in prove e qualifica scrivi l'orologio che vedi in TV -->
+    <button id="tv-btn" type="button" title="tocca quando in TV cambia il contagiri">TV</button>
+    <button id="tv-minus" type="button" aria-label="ritardo meno 1 secondo">−1</button>
+    <button id="tv-plus" type="button" aria-label="ritardo più 1 secondo">+1</button>
+    <span id="tv-clock-box" hidden>
+      <input id="tv-clock" inputmode="numeric" autocomplete="off" placeholder="orologio TV, es. 23:10">
+      <button id="tv-clock-ok" type="button">OK</button>
+    </span>
+    <span id="tv-state" class="hint" aria-live="polite"></span>
+  </div>
   <div id="conn" class="dot" title="connessione"></div>
 </header>
 
+<!-- Ultimo messaggio della direzione gara: resta in vista qualunque pannello si stia guardando. -->
+<div id="stale" role="status" hidden></div>
+
+<button id="rc-ticker" type="button" hidden>
+  <span class="rc-tag">Direzione gara</span>
+  <span class="rc-lap" id="rc-ticker-lap"></span>
+  <span class="rc-msg" id="rc-ticker-msg"></span>
+  <span class="rc-more" id="rc-ticker-more"></span>
+</button>
+
+<button id="settings-toggle" type="button" aria-expanded="false" aria-controls="settings">Impostazioni</button>
+
 <nav id="settings">
   <label>Segui <select id="follow"></select></label>
-  <label title="Il feed è avanti rispetto alla TV: metti i secondi di ritardo per allinearlo">Ritardo TV <input id="delay" type="number" min="0" max="300" step="1" value="0"> s</label>
+  <label title="Il feed è avanti rispetto alla TV: metti i secondi di ritardo per allinearlo, o usa il tasto TV in alto">Ritardo TV <input id="delay" type="number" min="0" max="299" step="0.1" value="0"> s</label>
   <label>Pit loss <input id="pit-loss" type="number" step="0.5" min="10" max="40"> s <span class="hint" id="pit-loss-hint"></span></label>
   <span class="sep"></span>
   <label><input type="checkbox" data-panel="battle" checked> Battaglia</label>
@@ -34,20 +69,33 @@
   <label><input type="checkbox" data-panel="map" checked> Mappa</label>
   <label><input type="checkbox" data-panel="radio" checked> Radio</label>
   <label><input type="checkbox" data-panel="rc" checked> Direzione gara</label>
+  <label><input type="checkbox" data-panel="perf" checked> Prestazioni</label>
+  <label><input type="checkbox" data-panel="champ" checked> Campionato</label>
+  <label><input type="checkbox" data-panel="cmp" checked> Confronto giri</label>
   <span class="sep"></span>
   <label><input type="checkbox" id="opt-metrics"> Marcia/velocità in tabella</label>
   <label><input type="checkbox" id="opt-autoplay" checked> Radio automatici</label>
   <label><input type="checkbox" id="opt-chime"> Campanello direzione gara</label>
+  <label title="Alcuni telefoni dichiarano una larghezza da computer: qui la puoi forzare">Modalità telefono
+    <select id="opt-mobile">
+      <option value="auto">automatica</option>
+      <option value="on">sempre</option>
+      <option value="off">mai</option>
+    </select>
+  </label>
   <span class="hint">★ clicca un pilota in tabella per i preferiti</span>
 </nav>
+
+<!-- Scheda del pilota seguito: solo su telefono, sempre visibile sopra le schede. -->
+<section id="hero" class="panel" aria-label="Pilota seguito"></section>
 
 <main>
   <section id="board" class="panel">
     <table id="leaderboard">
       <thead><tr>
-        <th>P</th><th>Pilota</th><th></th><th class="r">Gap</th><th class="r">Int</th>
-        <th class="r">Ultimo</th><th class="r">Migliore</th><th>Settori</th>
-        <th>Gomma</th><th class="r">Soste</th><th>Stint</th><th class="metrics">Auto</th>
+        <th>P</th><th>Pilota</th><th></th><th class="r">Gap</th><th class="r col-int">Int</th>
+        <th class="r">Ultimo</th><th class="r col-best">Migliore</th><th class="col-sectors">Settori</th>
+        <th>Gomma</th><th class="r col-stops">Soste</th><th class="col-stints">Stint</th><th class="metrics">Auto</th>
       </tr></thead>
       <tbody></tbody>
     </table>
@@ -60,7 +108,11 @@
     </section>
 
     <section class="panel" id="wall">
-      <div class="panel-head"><h2>Muretto</h2><span class="hint">seguito + preferiti</span></div>
+      <div class="panel-head">
+        <h2>Muretto</h2>
+        <label><input type="checkbox" id="opt-wall-all"> Tutti i piloti</label>
+        <span class="hint" id="wall-hint">seguito + preferiti</span>
+      </div>
       <div id="wall-cards"></div>
     </section>
 
@@ -78,9 +130,11 @@
       <label>3 <select class="tel-driver" data-slot="2"></select></label>
       <span class="hint">ultimi 60 s · pieno = gas, tratteggio = freno</span>
     </div>
+    <div class="hint big-hint" id="tel-hint" hidden>In diretta la F1 manda la telemetria (velocità, gas, freno, marce, giri motore) solo a chi è abbonato a F1 TV, quindi qui non arriva. Nel replay di una sessione finita c'è tutta.</div>
     <div class="charts">
       <div id="chart-speed"></div>
       <div id="chart-pedals"></div>
+      <div id="chart-rpm"></div>
       <div id="chart-gear"></div>
     </div>
   </section>
@@ -91,15 +145,82 @@
   </section>
 
   <section class="panel" id="radio">
-    <div class="panel-head"><h2>Team radio</h2><span class="hint" id="radio-count"></span></div>
+    <div class="panel-head">
+      <h2>Team radio</h2><span class="hint" id="radio-count"></span>
+      <span class="chips" id="radio-filters"><button data-f="all" class="on">Tutti</button><button data-f="mine">Miei</button><button data-f="hot">Caldi</button></span>
+    </div>
     <ul id="radio-list"></ul>
   </section>
 
   <section class="panel" id="rc">
-    <div class="panel-head"><h2>Direzione gara</h2></div>
+    <div class="panel-head">
+      <h2>Direzione gara</h2>
+      <span class="chips" id="rc-filters">
+        <button data-f="all" class="on">Tutti</button><button data-f="flag">Bandiere</button><button data-f="stewards">Commissari</button><button data-f="limits">Track limits</button><button data-f="sc">Safety car</button>
+      </span>
+    </div>
+    <div id="incidents"></div>
     <ul id="rc-list"></ul>
   </section>
+
+  <section class="panel" id="perf">
+    <div class="panel-head"><h2>Prestazioni</h2></div>
+    <p class="explain"><b>Giro teorico</b>: il giro che ogni pilota farebbe mettendo insieme i suoi tre settori migliori. <b>Lasciato</b> è quanto il suo giro migliore vero è più lento di così: più è alto, più tempo ha ancora in tasca.</p>
+    <div id="perf-theo"></div>
+    <p class="explain"><b>Chi è più veloce dove</b>: i cinque migliori in ogni settore e nella velocità di punta. Il pilota che segui compare sempre.</p>
+    <div class="ranks" id="perf-ranks"></div>
+    <div class="panel-head sub"><h2>Posizioni giro per giro</h2></div>
+    <p class="explain">Una linea per pilota: più in alto vuol dire più avanti in classifica. Forti quello che segui e i preferiti, sbiadite le altre.</p>
+    <div id="chart-laps"></div>
+  </section>
+
+  <section class="panel" id="cmp">
+    <div class="panel-head"><h2>Confronto giri</h2></div>
+    <p class="explain">I giri migliori di due o tre piloti sovrapposti lungo la pista: velocità, gas, freno, marcia e <b>distacco metro per metro</b>, come nelle analisi di telemetria che si vedono dopo le sessioni. Funziona sulle sessioni già finite: la F1 pubblica la telemetria solo a sessione conclusa.</p>
+    <div class="cmp-controls">
+      <label>Sessione <select id="cmp-session"></select></label>
+      <label>1 <select class="cmp-driver"></select></label>
+      <label>2 <select class="cmp-driver"></select></label>
+      <label>3 <select class="cmp-driver"></select></label>
+      <button id="cmp-go" type="button">Confronta</button>
+    </div>
+    <div id="cmp-status" class="hint"></div>
+    <div id="cmp-summary"></div>
+    <div id="cmp-charts">
+      <h3 class="cmp-t">Distacco dal primo (s) <span class="hint">sopra lo zero = più lento</span></h3><div id="cmp-delta"></div>
+      <h3 class="cmp-t">Velocità (km/h)</h3><div id="cmp-speed"></div>
+      <h3 class="cmp-t">Gas (%)</h3><div id="cmp-throttle"></div>
+      <h3 class="cmp-t">Freno</h3><div id="cmp-brake"></div>
+      <h3 class="cmp-t">Marcia</h3><div id="cmp-gear"></div>
+    </div>
+  </section>
+
+  <section class="panel" id="champ">
+    <div class="panel-head"><h2>Campionato se finisse adesso</h2><span class="hint" id="champ-hint"></span></div>
+    <div id="champ-body"></div>
+  </section>
 </main>
+
+<!-- Schede: solo su telefono, mostrano un pannello alla volta. -->
+<nav id="tabbar" aria-label="Pannelli">
+  <button data-tab="board" class="on">Tabellone</button>
+  <button data-tab="battle">Battaglia</button>
+  <button data-tab="wall">Muretto</button>
+  <button data-tab="rc">Direzione</button>
+  <button data-tab="radio">Radio</button>
+  <button data-tab="map">Mappa</button>
+  <button data-tab="gaps">Gap</button>
+  <button data-tab="perf">Prestazioni</button>
+  <button data-tab="champ">Campionato</button>
+  <button data-tab="telemetry">Telemetria</button>
+  <button data-tab="cmp">Confronto</button>
+</nav>
+
+<!-- Avvisi: fascia a tutto schermo per SC/VSC/rossa e banner per seguito e preferiti -->
+<div id="takeover" role="alert" aria-live="assertive" hidden><div class="to-title"></div><div class="to-sub"></div></div>
+<div id="toasts" aria-live="polite"></div>
+<!-- Video muto in loop: su http (niente wakeLock) è il modo per non far spegnere lo schermo -->
+<video id="nosleep" src="/web/vendor/nosleep.mp4" muted playsinline loop preload="auto"></video>
 
 <script src="/web/vendor/uPlot.iife.min.js"></script>
 <script src="/web/app.js"></script>
