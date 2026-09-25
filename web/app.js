@@ -16,7 +16,7 @@
     follow: store("follow", ""), favs: store("favs", []), telDrivers: store("telDrivers", []),
     panels: store("panels", {}), metrics: store("metrics", false), autoplay: store("autoplay", true), chime: store("chime", false),
     delay: store("delay", 0), pitLoss: store("pitLoss", null), tab: store("tab", "board"),
-    wallAll: store("wallAll", false),
+    wallAll: store("wallAll", false), mobile: store("mobile", "auto"),
   };
   /** Pit loss in uso: quella scelta dall'utente, altrimenti quella del server (già adattata a SC/VSC). */
   const pitLossNow = () => prefs.pitLoss ?? state.pit_loss.value;
@@ -54,9 +54,16 @@
   const TRACK_LABEL = { green: "VERDE", yellow: "GIALLA", sc: "SAFETY CAR", vsc: "VSC", vsc_ending: "VSC FINISCE", red: "ROSSA" };
   const isRace = () => state?.session.type === "Race";
   const drsState = (v) => (v == null ? "" : v > 9 ? "on" : v === 8 ? "possible" : "off");
-  /** Modalità telefono: stessa soglia del CSS. */
-  const mq = window.matchMedia("(max-width: 720px)");
-  const isMobile = () => mq.matches;
+  /** Modalità telefono. Alcuni telefoni (es. col "sito desktop" attivo) dichiarano una
+   *  larghezza da computer: per questo si può forzare a mano dalle impostazioni. */
+  const mq = window.matchMedia("(max-width: 820px)");
+  const isMobile = () => document.body.classList.contains("m");
+  function applyMobileMode() {
+    const on = prefs.mobile === "on" ? true : prefs.mobile === "off" ? false : mq.matches;
+    if (on === isMobile()) return false;
+    document.body.classList.toggle("m", on);
+    return true;
+  }
   /** Un pannello nascosto dal CSS ha larghezza 0: i grafici non vanno ridisegnati. */
   const isVisible = (el) => !!el && el.offsetParent !== null && el.clientWidth > 0;
 
@@ -146,6 +153,7 @@
     for (const cb of document.querySelectorAll("[data-panel]")) { const on = prefs.panels[cb.dataset.panel] ?? true; cb.checked = on; $("#" + cb.dataset.panel).hidden = !on; }
     $("#opt-metrics").checked = prefs.metrics; $("#opt-autoplay").checked = prefs.autoplay; $("#opt-chime").checked = prefs.chime;
     $("#opt-wall-all").checked = prefs.wallAll;
+    $("#opt-mobile").value = prefs.mobile;
     // le schede seguono i pannelli scelti; se sparisce quella aperta si torna al tabellone
     for (const b of $("#tabbar").children) {
       if (b.dataset.tab === "board") continue;
@@ -222,7 +230,7 @@
         <td class="pos">${d.pos}</td>
         <td class="col-drv"><span class="drv"><i style="background:${d.colour}"></i>${esc(d.tla)}</span>${gained}${drs}${st}</td>
         <td class="star ${isFav(d.num) ? "on" : ""}" title="preferito">★</td>
-        <td class="r col-gap">${esc(d.gap)}</td>
+        <td class="r col-gap">${esc(d.gap) || (d.pos === 1 ? '<span class="leader">LEADER</span>' : "")}</td>
         <td class="r col-int ${d.catching ? "catching" : ""}">${esc(d.interval)}</td>
         <td class="r col-last ${d.last_of ? "of" : d.last_pf ? "pf" : ""}">${esc(d.last)}</td>
         <td class="r col-best">${esc(d.best)}</td>
@@ -531,7 +539,12 @@
     e.currentTarget.setAttribute("aria-expanded", String(open));
   });
   /** Passando fra telefono e desktop cambia sia la scheda del pilota sia chi è visibile. */
-  mq.addEventListener("change", () => { chartKey = ""; gapKey = ""; if (state) render(); });
+  mq.addEventListener("change", () => { if (applyMobileMode()) { chartKey = ""; gapKey = ""; if (state) render(); } });
+  $("#opt-mobile").addEventListener("change", (e) => {
+    prefs.mobile = e.target.value; save("mobile", prefs.mobile);
+    applyMobileMode(); chartKey = ""; gapKey = ""; if (state) render();
+  });
+  applyMobileMode();
   setTab(prefs.tab);
 
   connect();
