@@ -24,11 +24,14 @@
   const isFav = (n) => prefs.favs.includes(n);
 
   // ------------------------------------------------------------ websocket
+  let lastMsgAt = Date.now(), reconnectTimer = null;
   function connect() {
+    clearTimeout(reconnectTimer);
     ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws?delay=${prefs.delay || 0}`);
-    ws.onopen = () => $("#conn").classList.add("on");
-    ws.onclose = () => { $("#conn").classList.remove("on"); setTimeout(connect, 2000); };
+    ws.onopen = () => { $("#conn").classList.add("on"); lastMsgAt = Date.now(); };
+    ws.onclose = () => { $("#conn").classList.remove("on"); reconnectTimer = setTimeout(connect, 2000); };
     ws.onmessage = (ev) => {
+      lastMsgAt = Date.now();
       const m = JSON.parse(ev.data);
       if (m.type === "state") { state = m; render(); }
       else if (m.type === "car_history") { for (const [n, s] of Object.entries(m.drivers)) tel[n] = s.slice(-KEEP); }
@@ -43,6 +46,24 @@
     };
   }
   const send = (o) => { if (ws?.readyState === 1) ws.send(JSON.stringify(o)); };
+
+  /** Dati fermi: lo stato arriva ogni mezzo secondo, se tace da 5 s qualcosa non va (WiFi, Mac in
+   *  stop, telefono che ha sospeso la pagina). Si dice, e da 10 s ci si ricollega da capo. */
+  function reconnectNow() {
+    if (ws && ws.readyState <= 1) { ws.onclose = null; ws.close(); }
+    $("#conn").classList.remove("on");
+    connect();
+  }
+  setInterval(() => {
+    const quiet = (Date.now() - lastMsgAt) / 1000, el = $("#stale");
+    el.hidden = quiet < 5 || !state;
+    if (!el.hidden) el.textContent = `Dati fermi da ${Math.round(quiet)} s: mi sto ricollegando…`;
+    if (quiet >= 10 && ws?.readyState === 1) reconnectNow();
+  }, 1000);
+  // schermo riacceso: il telefono può aver sospeso la pagina, si riparte subito senza aspettare
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden && (!ws || ws.readyState !== 1 || Date.now() - lastMsgAt > 3000)) reconnectNow();
+  });
 
   // ------------------------------------------------------------ helpers
   const fmtClock = (s) => { if (s == null) return "–"; s = Math.floor(s); return [s / 3600, s / 60 % 60, s % 60].map((x) => String(Math.floor(x)).padStart(2, "0")).join(":"); };

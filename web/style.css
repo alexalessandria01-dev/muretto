@@ -478,3 +478,7 @@ body.m #leaderboard tr.cutrow td { display: block; border: 0; background: none; 
 .flagb.fly.ok { background: rgba(46, 224, 106, .16); color: var(--green); }
 .flagb.fly.ko { background: rgba(255, 69, 58, .18); color: var(--red); }
 .flagb.fly.mid { background: rgba(255, 212, 38, .16); color: var(--yellow); }
+
+/* ---------- dati fermi */
+#stale { position: sticky; top: 0; z-index: 40; margin: 8px 0 0; padding: 9px 12px; border-radius: var(--r-sm);
+  background: var(--yellow); color: #07090c; font-weight: 700; font-size: 13px; text-align: center; }

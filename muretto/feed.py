@@ -124,7 +124,10 @@ class LiveFeed:
         async with aiohttp.ClientSession() as session:
             token, cookie = await self._negotiate(session)
             headers = {"User-Agent": "BestHTTP", "Accept-Encoding": "gzip,identity", "Cookie": cookie}
-            async with session.ws_connect(f"wss://{self.base}?id={token}", headers=headers, heartbeat=None) as ws:
+            # receive_timeout: la F1 manda un ping ogni ~16 s; se per 45 s non arriva niente il collegamento
+            # è appeso a metà e senza limite non ci si riconnetterebbe mai più
+            async with session.ws_connect(f"wss://{self.base}?id={token}", headers=headers, heartbeat=None,
+                                          receive_timeout=45) as ws:
                 await ws.send_str(json.dumps({"protocol": "json", "version": 1}) + RECORD_SEP)
                 hs = await ws.receive()
                 if hs.type != aiohttp.WSMsgType.TEXT or json.loads(hs.data.rstrip(RECORD_SEP) or "{}").get("error"):

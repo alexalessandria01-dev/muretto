@@ -18,10 +18,11 @@ import aiohttp
 from aiohttp import WSMsgType, web
 
 import re
+from dataclasses import asdict
 
 from . import calibration, compare
-from .feed import STATIC_BASE, ArchiveFeed, download_session, season_index
-from .state import RaceState
+from .feed import STATIC_BASE, ArchiveFeed, cache_dir, download_session, season_index
+from .state import Lap, RaceState
 
 log = logging.getLogger(__name__)
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
@@ -49,6 +50,8 @@ async def fetch_circuit(key: int, year: int) -> dict:
 
 
 class Hub:
+    PUSH_TIMEOUT = 5.0  # secondi concessi a un telefono per ricevere un aggiornamento
+
     def __init__(self, feed):
         self.feed = feed
         self.state = RaceState()
@@ -57,6 +60,8 @@ class Hub:
         self._circuit_path: str | None = None
         self._cmp_cache: dict[str, compare.Session] = {}  # sessioni d'archivio lette per il confronto giri
         self._cmp_locks: dict[str, asyncio.Lock] = {}
+        self._laps_saved = 0      # giri già scritti su disco
+        self._laps_loaded = False  # storico ripreso (una volta, al primo snapshot)
 
     async def ingest(self):
         async for topic, data, ts in self.feed:
@@ -66,6 +71,9 @@ class Hub:
                     self.state.replay_position = ts
                 if topic in ("SessionInfo", "__snapshot__"):
                     self._maybe_load_circuit()
+                    if not self._laps_loaded:
+                        self._laps_loaded = True
+                        self._load_laps()
             except Exception:  # noqa: BLE001 - un messaggio storto non deve fermare il feed
                 log.exception("errore applicando %s", topic)
 
@@ -101,17 +109,68 @@ class Hub:
             self.state.circuit_info["rev"] = self.state.circuit_info.get("rev", 0) + 1
 
     async def broadcast(self):
+        """Ogni TICK: snapshot nello storico e invio a tutti i telefoni.
+
+        Un errore nello snapshot salta quel giro invece di fermare per sempre gli aggiornamenti,
+        e i telefoni si servono in parallelo con un tempo limite: uno lento (o col WiFi che va
+        e viene) non deve far aspettare gli altri."""
         loop = asyncio.get_event_loop()
         while True:
             await asyncio.sleep(TICK)
-            car, pos = self.state.drain_telemetry()
-            now = loop.time()
-            self.history.append((now, json.dumps({"type": "state", **self.state.snapshot()}), car, pos))
-            for ws, c in list(self.clients.items()):
-                try:
-                    await self._push(ws, c, now)
-                except Exception:  # noqa: BLE001
+            try:
+                car, pos = self.state.drain_telemetry()
+                now = loop.time()
+                self.history.append((now, json.dumps({"type": "state", **self.state.snapshot()}), car, pos))
+            except Exception:  # noqa: BLE001
+                log.exception("snapshot non riuscito, riprovo al prossimo giro")
+                continue
+            self._save_laps()
+            clients = list(self.clients.items())
+            results = await asyncio.gather(*(asyncio.wait_for(self._push(ws, c, now), self.PUSH_TIMEOUT) for ws, c in clients),
+                                           return_exceptions=True)
+            for (ws, _), r in zip(clients, results):
+                if isinstance(r, Exception):  # troppo lento o già chiuso: la pagina si ricollega da sola
                     self.clients.pop(ws, None)
+                    asyncio.create_task(ws.close())
+
+    # ------------------------------------------------------------ storico dei giri su disco
+    def _laps_file(self) -> Path | None:
+        path = (self.state.data.get("SessionInfo") or {}).get("Path")
+        return cache_dir() / "live" / (path.strip("/").replace("/", "__") + ".json") if path else None
+
+    def _save_laps(self):
+        """Lo storico dei giri serve a degrado, battaglie e gap: se il server riparte a metà gara
+        la F1 rimanda lo stato attuale ma non i giri passati. Si salva a ogni giro nuovo."""
+        total = sum(len(v) for v in self.state.laps.values())
+        if isinstance(self.feed, ArchiveFeed) or total == self._laps_saved:
+            return
+        f = self._laps_file()
+        if not f:
+            return
+        try:
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(json.dumps({num: [asdict(l) for l in laps] for num, laps in self.state.laps.items()}))
+            self._laps_saved = total
+        except OSError as e:
+            log.warning("storico giri non salvato: %s", e)
+
+    def _load_laps(self):
+        f = self._laps_file()
+        if not f or not f.exists() or isinstance(self.feed, ArchiveFeed):
+            return
+        try:
+            saved = json.loads(f.read_text())
+        except (OSError, ValueError) as e:
+            log.warning("storico giri illeggibile: %s", e)
+            return
+        n = 0
+        for num, laps in saved.items():
+            have = {l.lap for l in self.state.laps.get(num, [])}
+            old = [Lap(**l) for l in laps if l["lap"] not in have]
+            self.state.laps[num] = sorted(old + list(self.state.laps.get(num, [])), key=lambda l: l.lap)
+            n += len(old)
+        self._laps_saved = sum(len(v) for v in self.state.laps.values())
+        log.info("storico giri ripreso dal disco: %d giri", n)
 
     async def _push(self, ws, c: dict, now: float):
         """Manda al client lo snapshot e la telemetria fino a ``now - delay``."""
