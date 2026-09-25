@@ -16,7 +16,7 @@
     follow: store("follow", ""), favs: store("favs", []), telDrivers: store("telDrivers", []),
     panels: store("panels", {}), metrics: store("metrics", false), autoplay: store("autoplay", true), chime: store("chime", false),
     delay: store("delay", 0), pitLoss: store("pitLoss", null), tab: store("tab", "board"),
-    wallAll: store("wallAll", false), mobile: store("mobile", "auto"), rcFilter: store("rcFilter", "all"),
+    wallAll: store("wallAll", false), mobile: store("mobile", "auto"), rcFilter: store("rcFilter", "all"), radioFilter: store("radioFilter", "all"),
   };
   /** Pit loss in uso: quella scelta dall'utente, altrimenti quella del server (già adattata a SC/VSC). */
   const pitLossNow = () => prefs.pitLoss ?? state.pit_loss.value;
@@ -435,23 +435,50 @@
   }
 
   // ------------------------------------------------------------ radio (incrementale, mai ricostruita)
-  const radioSeen = new Set(); let radioReady = false, radioPath = null;
+  const radioSeen = new Map(); let radioReady = false, radioPath = null;  // path → <li>
+  /** Testo del radio con le parole calde evidenziate: toccandole compare la spiegazione. */
+  function radioText(r) {
+    if (r.status === "spenta") return "";
+    if (r.status === "in trascrizione") return '<span class="hint">in trascrizione…</span>';
+    if (r.status === "rumore") return '<span class="hint">solo rumore</span>';
+    if (r.status === "errore" || !r.text) return '<span class="hint">trascrizione non riuscita</span>';
+    let html = esc(r.text);
+    for (const h of r.hot || []) {
+      html = html.replace(new RegExp(`\\b(${h.w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})\\b`, "gi"), `<mark data-it="${esc(h.it)}">$1</mark>`);
+    }
+    return `“${html}”`;
+  }
+  /** Filtro del pannello: tutti, solo seguito e preferiti, oppure solo quelli con parole calde. */
+  const radioShown = (r) => prefs.radioFilter === "mine" ? (r.num === prefs.follow || isFav(r.num))
+    : prefs.radioFilter === "hot" ? (r.hot || []).length > 0 : true;
   function renderRadio() {
     const ul = $("#radio-list");
     if (state.session.path !== radioPath) {  // sessione nuova: via le radio vecchie, niente autoplay a raffica
       radioPath = state.session.path; radioSeen.clear(); ul.innerHTML = ""; radioReady = false;
     }
     $("#radio-count").textContent = state.radio.length ? `${state.radio.length} messaggi` : "";
-    const fresh = state.radio.filter((r) => !radioSeen.has(r.path));
-    for (const r of fresh) {
-      radioSeen.add(r.path);
-      const li = document.createElement("li");
-      li.className = radioReady ? "new" : "";
-      li.innerHTML = `<span class="t">${localTime(r.utc)}</span><span class="who" style="color:${colourOf(r.num)}">${esc(r.tla)}</span><audio controls preload="metadata" src="/audio?p=${encodeURIComponent(r.path)}"></audio>`;
-      ul.prepend(li);
-      if (radioReady && prefs.autoplay && (!prefs.follow || r.num === prefs.follow || isFav(r.num))) li.querySelector("audio").play().catch(() => {});
-    }
     if (!state.radio.length && !ul.children.length) ul.innerHTML = '<li class="hint">ancora nessun team radio</li>';
+    for (const r of state.radio) {
+      let li = radioSeen.get(r.path);
+      if (!li) {
+        if (!radioSeen.size) ul.innerHTML = "";
+        li = document.createElement("li");
+        li.className = radioReady ? "new" : "";
+        li.innerHTML = `<span class="t">${localTime(r.utc)}</span><span class="who" style="color:${colourOf(r.num)}">${esc(r.tla)}</span>`
+          + `<audio controls preload="metadata" src="/audio?p=${encodeURIComponent(r.path)}"></audio><span class="rtxt"></span><span class="gloss"></span>`;
+        ul.prepend(li);
+        radioSeen.set(r.path, li);
+        if (radioReady && prefs.autoplay && (!prefs.follow || r.num === prefs.follow || isFav(r.num))) li.querySelector("audio").play().catch(() => {});
+      }
+      // giro e testo arrivano dopo (trascrizione in corso): si aggiornano solo se cambiano
+      const tot = state.session.total_laps, after = isRace() && tot && r.lap > tot;  // dopo la bandiera a scacchi
+      const t = `${localTime(r.utc)}${r.lap ? ` · ${after ? "arrivo" : "G" + r.lap}` : ""}`;
+      if (li.dataset.t !== t) { li.dataset.t = t; li.querySelector(".t").textContent = t; }
+      const key = `${r.status}|${r.text}`;
+      if (li.dataset.k !== key) { li.dataset.k = key; li.querySelector(".rtxt").innerHTML = radioText(r); }
+      li.classList.toggle("hot", (r.hot || []).length > 0);
+      li.hidden = !radioShown(r);
+    }
     radioReady = true;
   }
 
@@ -920,6 +947,19 @@
   for (const x of $("#rc-filters").children) x.classList.toggle("on", x.dataset.f === prefs.rcFilter);
   $("#cmp-session").addEventListener("change", loadCmpLaps);
   $("#cmp-go").addEventListener("click", runCompare);
+  $("#radio-filters").addEventListener("click", (e) => {
+    const b = e.target.closest("button"); if (!b) return;
+    prefs.radioFilter = b.dataset.f; save("radioFilter", prefs.radioFilter);
+    for (const x of $("#radio-filters").children) x.classList.toggle("on", x === b);
+    if (state) renderRadio();
+  });
+  for (const x of $("#radio-filters").children) x.classList.toggle("on", x.dataset.f === prefs.radioFilter);
+  // parola calda toccata: la spiegazione compare sotto il radio
+  $("#radio-list").addEventListener("click", (e) => {
+    const m = e.target.closest("mark"); if (!m) return;
+    const g = m.closest("li").querySelector(".gloss");
+    g.textContent = g.textContent.startsWith(m.textContent) ? "" : `${m.textContent} = ${m.dataset.it}`;
+  });
   // toccando la fascia si aprono tutti i messaggi
   $("#rc-ticker").addEventListener("click", () => {
     if (isMobile()) setTab("rc");

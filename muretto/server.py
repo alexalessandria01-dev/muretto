@@ -20,7 +20,7 @@ from aiohttp import WSMsgType, web
 import re
 from dataclasses import asdict
 
-from . import calibration, compare
+from . import calibration, compare, radio
 from .feed import STATIC_BASE, ArchiveFeed, cache_dir, download_session, season_index
 from .state import Lap, RaceState
 
@@ -60,6 +60,9 @@ class Hub:
         self._circuit_path: str | None = None
         self._cmp_cache: dict[str, compare.Session] = {}  # sessioni d'archivio lette per il confronto giri
         self._cmp_locks: dict[str, asyncio.Lock] = {}
+        self.transcriber = radio.Transcriber()  # team radio → testo, con whisper se c'è
+        if self.transcriber.enabled:
+            self.state.radio_text = self.transcriber.results
         self._laps_saved = 0      # giri già scritti su disco
         self._laps_loaded = False  # storico ripreso (una volta, al primo snapshot)
 
@@ -69,6 +72,8 @@ class Hub:
                 self.state.apply(topic, data, ts)
                 if isinstance(self.feed, ArchiveFeed):
                     self.state.replay_position = ts
+                if topic in ("SessionInfo", "__snapshot__", "TeamRadio"):
+                    self._queue_radio()
                 if topic in ("SessionInfo", "__snapshot__"):
                     self._maybe_load_circuit()
                     if not self._laps_loaded:
@@ -76,6 +81,15 @@ class Hub:
                         self._load_laps()
             except Exception:  # noqa: BLE001 - un messaggio storto non deve fermare il feed
                 log.exception("errore applicando %s", topic)
+
+    def _queue_radio(self):
+        """Mette in coda di trascrizione i radio della sessione non ancora trascritti."""
+        info = self.state.data.get("SessionInfo") or {}
+        self.transcriber.use_session(info.get("Path"))
+        caps = self.state.data.get("TeamRadio", {}).get("Captures") or []
+        for c in (caps.values() if isinstance(caps, dict) else caps):
+            if isinstance(c, dict) and c.get("Path") and info.get("Path"):
+                self.transcriber.enqueue(info["Path"] + c["Path"])
 
     def _maybe_load_circuit(self):
         info = self.state.data.get("SessionInfo") or {}
@@ -336,7 +350,8 @@ def make_app(feed) -> web.Application:
     app.router.add_static("/web", WEB_DIR)
 
     async def start_tasks(app):
-        app["tasks"] = [asyncio.create_task(hub.ingest()), asyncio.create_task(hub.broadcast())]
+        app["tasks"] = [asyncio.create_task(hub.ingest()), asyncio.create_task(hub.broadcast()),
+                        asyncio.create_task(hub.transcriber.run())]
 
     async def stop_tasks(app):
         for t in app["tasks"]:
