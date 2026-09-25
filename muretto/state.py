@@ -79,14 +79,19 @@ class RaceState:
         self._lap_start: dict[str, float] = {}
         self.replay_position: float | None = None
         self.circuit_info: dict = {}  # da MultiViewer: pit_loss {normal, sc, vsc}, tracciato, curve
+        self.last_ts: float = 0.0     # istante dell'ultimo messaggio, nel tempo del feed
+        self._clock_at: float | None = None  # quando è arrivato l'ultimo ExtrapolatedClock
 
     # ------------------------------------------------------------------ ingresso
 
     def apply(self, topic: str, data, ts: float):
+        self.last_ts = ts
         if topic == "__snapshot__":
             for t, d in data.items():
                 self.apply(t, d, ts)
             return
+        if topic == "ExtrapolatedClock":
+            self._clock_at = ts
         if topic == "SessionInfo":
             new_path = (data or {}).get("Path")
             old_path = self.data.get("SessionInfo", {}).get("Path")
@@ -216,6 +221,31 @@ class RaceState:
                 if secs:
                     out.append(secs)
         return out
+
+    @staticmethod
+    def _hms_to_s(v) -> float | None:
+        try:
+            h, m, s = (float(x) for x in str(v).split(":"))
+        except ValueError:
+            return None
+        return h * 3600 + m * 60 + s
+
+    @staticmethod
+    def _s_to_hms(s: float) -> str:
+        s = max(0, int(s))
+        return f"{s // 3600:02d}:{s // 60 % 60:02d}:{s % 60:02d}"
+
+    def remaining(self) -> str:
+        """Tempo che resta. La F1 lo manda una volta sola con ``Extrapolating``:
+        da lì in poi il conto alla rovescia tocca a noi, altrimenti resta fermo."""
+        clock = self.data.get("ExtrapolatedClock", {})
+        left = clock.get("Remaining", "")
+        if not clock.get("Extrapolating") or self._clock_at is None:
+            return left
+        base = self._hms_to_s(left)
+        if base is None:
+            return left
+        return self._s_to_hms(base - (self.last_ts - self._clock_at))
 
     def pit_times(self) -> dict[str, dict]:
         """Tempo passato in pit lane, per pilota: quello vero della sessione, non la stima."""
@@ -389,7 +419,8 @@ class RaceState:
                 "track_msg": ts_data.get("Message", ""),
                 "lap": lc.get("CurrentLap"),
                 "total_laps": lc.get("TotalLaps"),
-                "remaining": clock.get("Remaining", ""),
+                "remaining": self.remaining(),
+                "extrapolating": bool(clock.get("Extrapolating")),
                 "replay_position": self.replay_position,
             },
             "weather": {
