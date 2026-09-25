@@ -17,6 +17,7 @@
     panels: store("panels", {}), metrics: store("metrics", false), autoplay: store("autoplay", true), chime: store("chime", false),
     delay: store("delay", 0), pitLoss: store("pitLoss", null), tab: store("tab", "board"),
     wallAll: store("wallAll", false), mobile: store("mobile", "auto"), rcFilter: store("rcFilter", "all"), radioFilter: store("radioFilter", "all"),
+    alerts: store("alerts", false),
   };
   /** Pit loss in uso: quella scelta dall'utente, altrimenti quella del server (già adattata a SC/VSC). */
   const pitLossNow = () => prefs.pitLoss ?? state.pit_loss.value;
@@ -179,11 +180,14 @@
     $("#w-wind").textContent = w.wind ? `${w.wind} m/s${w.wind_dir ? " " + windArrow(w.wind_dir) : ""}` : "–";
     $("#w-hum").textContent = w.humidity ? `${w.humidity} %` : "–";
     $("#w-press").textContent = w.pressure ? `${w.pressure} mb` : "–";
-    $("#w-rain").textContent = w.rain == null ? "–" : (String(w.rain) === "1" ? "SÌ" : "no");
     $("#replay-box").hidden = s.replay_position == null;
     $("#replay-pos").textContent = fmtClock(s.replay_position);
     document.body.classList.toggle("show-metrics", prefs.metrics);
 
+    trackLapChange(s.lap);
+    trackAlert();
+    driverAlerts();
+    rainInfo();
     renderControls();
     renderHero();
     renderBoard();
@@ -484,9 +488,7 @@
 
   // ------------------------------------------------------------ direzione gara
   let rcCount = -1, chimeReady = false;
-  function chime() {
-    try { const ac = new AudioContext(), o = ac.createOscillator(), g = ac.createGain(); o.frequency.value = 880; g.gain.value = 0.08; o.connect(g).connect(ac.destination); o.start(); o.stop(ac.currentTime + 0.25); } catch {}
-  }
+  const chime = () => beep([[880, 0.25]]);
   /** Fascia sempre in vista con l'ultimo messaggio: la direzione gara non deve stare dietro una scheda. */
   function renderRcTicker(list) {
     const el = $("#rc-ticker"), last = list[0];
@@ -530,7 +532,8 @@
     // (a Monza già al giro 4), quindi si guarda il totale
     const total = state.race_control_total ?? list.length;
     if (total !== rcCount) {
-      if (chimeReady && prefs.chime && total > rcCount) chime();
+      // suona solo se fra i messaggi nuovi ce n'è uno che conta (niente bandiere blu, CLEAR, track limits altrui)
+      if (chimeReady && prefs.chime && total > rcCount && list.slice(0, total - rcCount).some(rcImportant)) chime();
       rcCount = total; chimeReady = true;
     }
     const key = `${prefs.rcFilter}:${total}`;
@@ -540,6 +543,237 @@
       .map((m) => `<li class="flag-${esc(m.Flag || "")} cat-${esc(m.Category || "")}"><span class="lap">${m.Lap ? "G" + m.Lap : ""}</span><span>${esc(m.Message)}</span></li>`).join("")
       || '<li class="hint">nessun messaggio di questo tipo</li>';
   }
+
+  // ------------------------------------------------------------ avvisi da muretto
+  /* Suono e vibrazione su Chrome Android partono solo dopo un tocco: il bottone "Attiva avvisi"
+   * (o, se erano già attivi, il primo tocco sulla pagina) sblocca un AudioContext che poi si
+   * riusa sempre. Prima se ne creava uno nuovo a ogni campanello. */
+  let audio = null, beeps = 0;
+  function unlockAudio() {
+    try {
+      audio ||= new (window.AudioContext || window.webkitAudioContext)();
+      if (audio.state === "suspended") audio.resume();
+    } catch { audio = null; }
+  }
+  /** Sequenza di bip: [[frequenza Hz, durata s], ...]. */
+  function beep(notes) {
+    beeps++;
+    if (!audio || audio.state !== "running") return;
+    let t = audio.currentTime;
+    for (const [f, d] of notes) {
+      const o = audio.createOscillator(), g = audio.createGain();
+      o.frequency.value = f;
+      g.gain.setValueAtTime(0.09, t);
+      g.gain.exponentialRampToValueAtTime(0.001, t + d);
+      o.connect(g).connect(audio.destination);
+      o.start(t); o.stop(t + d);
+      t += d + 0.05;
+    }
+  }
+  const vibrate = (pattern) => { if (prefs.alerts) try { navigator.vibrate?.(pattern); } catch {} };
+
+  /** Schermo sempre acceso. Il wakeLock vero c'è solo su https: su http (il Mac in rete di casa)
+   *  si fa girare un video muto di 2 s in loop, il trucco di NoSleep. Da provare sul Samsung. */
+  let wakeLock = null;
+  async function keepAwake() {
+    try {
+      if ("wakeLock" in navigator && window.isSecureContext) {
+        wakeLock = await navigator.wakeLock.request("screen");
+        return "wakelock";
+      }
+    } catch {}
+    try { await $("#nosleep").play(); return "video"; } catch { return null; }
+  }
+  let awakeHow = null;
+  function alertsUi() {
+    const b = $("#alerts-btn"), live = !!audio && audio.state === "running";
+    b.classList.toggle("on", live && prefs.alerts);
+    b.textContent = live && prefs.alerts ? "Avvisi attivi" : prefs.alerts ? "Riattiva avvisi" : "Attiva avvisi";
+    b.title = !live ? "tocca per suoni, vibrazione e schermo sempre acceso"
+      : awakeHow === "wakelock" ? "schermo tenuto acceso"
+      : awakeHow === "video" ? "schermo tenuto acceso col video muto: da provare sul Samsung"
+      : "suoni attivi, ma lo schermo non sono riuscito a tenerlo acceso";
+  }
+  async function activateAlerts() {
+    prefs.alerts = true; save("alerts", true);
+    prefs.chime = true; save("chime", true);
+    unlockAudio();
+    awakeHow = await keepAwake();
+    alertsUi();
+    beep([[660, 0.12], [880, 0.12]]); vibrate(80);
+    toast(awakeHow === "video" ? "Avvisi attivi · schermo acceso col video muto (da provare sul Samsung)"
+      : awakeHow === "wakelock" ? "Avvisi attivi · schermo sempre acceso" : "Avvisi attivi · lo schermo può spegnersi", "#2ee06a");
+  }
+
+  /** Fascia e cornice per SC, VSC e rossa, col pit loss di quel momento. */
+  const FLAG_ALERT = {
+    sc: { title: "SAFETY CAR", sub: (p) => `box ora: perdi ${Math.round(p.sc)} s invece di ${Math.round(p.normal)}`, notes: [[660, 0.2], [660, 0.2], [660, 0.2]], vib: [300, 150, 300, 150, 300] },
+    vsc: { title: "VIRTUAL SAFETY CAR", sub: (p) => `box ora: perdi ${Math.round(p.vsc)} s invece di ${Math.round(p.normal)}`, notes: [[740, 0.2], [740, 0.2]], vib: [300, 150, 300] },
+    vsc_ending: { title: "VSC FINISCE", sub: () => "si riparte a momenti", notes: [[880, 0.15]], vib: [150] },
+    red: { title: "BANDIERA ROSSA", sub: () => "gara sospesa · cambio gomme gratis", notes: [[440, 0.4], [440, 0.4]], vib: [600, 200, 600] },
+  };
+  const THEME = { sc: "#ffd426", vsc: "#ffd426", vsc_ending: "#ffd426", red: "#ff453a" };
+  let lastTrack = null, lastTrackPath = null, takeoverTimer = null;
+  function takeover(title, sub, cls) {
+    const el = $("#takeover");
+    el.className = cls; el.hidden = false;
+    el.onclick = () => { el.hidden = true; };
+    el.querySelector(".to-title").textContent = title;
+    el.querySelector(".to-sub").textContent = sub;
+    clearTimeout(takeoverTimer);
+    takeoverTimer = setTimeout(() => { el.hidden = true; }, 4000);
+  }
+  function trackAlert() {
+    const s = state.session, t = s.track;
+    document.body.dataset.flag = FLAG_ALERT[t] ? t : "";
+    document.querySelector('meta[name="theme-color"]').content = THEME[t] || "#07090c";
+    // pagina appena aperta (o ritardo cambiato): si prende atto dello stato, senza fascia
+    if (s.path !== lastTrackPath) { lastTrackPath = s.path; lastTrack = t; return; }
+    if (t === lastTrack) return;
+    const prev = lastTrack; lastTrack = t;
+    const a = FLAG_ALERT[t];
+    if (a) { takeover(a.title, a.sub(state.pit_loss), t); beep(a.notes); vibrate(a.vib); }
+    else if (t === "green" && FLAG_ALERT[prev]) { toast("PISTA LIBERA · si torna a correre", "#2ee06a"); beep([[988, 0.12], [1318, 0.18]]); vibrate(120); }
+  }
+
+  /** Messaggi della direzione gara per cui vale la pena suonare. Non le bandiere blu, non i CLEAR,
+   *  non i track limits degli altri: a Monza sono la gran parte dei 154 messaggi della gara. */
+  function rcImportant(m) {
+    const msg = String(m.Message || "").toUpperCase(), flag = String(m.Flag || "").toUpperCase();
+    const mine = [prefs.follow, ...prefs.favs].filter(Boolean).some((n) => new RegExp(`\\b${n} \\([A-Z]{3}\\)`).test(msg));
+    if (mine) return true;
+    if (flag === "BLUE" || flag === "CLEAR" || /\bCLEAR\b/.test(msg)) return false;
+    if (/TRACK LIMITS/.test(msg)) return false;
+    if (["RED", "YELLOW", "DOUBLE YELLOW", "CHEQUERED"].includes(flag)) return true;
+    if (m.Category === "SafetyCar" || /SAFETY CAR|\bVSC\b/.test(msg)) return true;
+    // "RED FLAG - RACE SUSPENDED" arriva senza il campo Flag: va letto nel testo
+    return /STEWARD|INVESTIGAT|PENALTY|NOTED|REPRIMAND|BLACK AND WHITE|DISQUALIF|RAIN|RED FLAG|SUSPENDED|WILL RESUME/.test(msg);
+  }
+
+  /** Banner in alto (spariscono da soli), letti anche dagli screen reader. */
+  function toast(text, colour) {
+    const box = $("#toasts"), el = document.createElement("div");
+    el.className = "toast"; el.style.borderLeftColor = colour || "var(--muted)"; el.textContent = text;
+    box.prepend(el);
+    while (box.children.length > 3) box.lastChild.remove();
+    setTimeout(() => el.remove(), 6000);
+  }
+  const say = (text, colour, notes, vib) => { toast(text, colour); beep(notes); vibrate(vib); };
+
+  /** Avvisi sul pilota seguito e sui preferiti: box, tempo da fermo, penalità, giro veloce, ritiro.
+   *  Niente sorpassi dal cambio di posizione: durante le soste degli altri darebbero falsi allarmi. */
+  const watchPrev = {};
+  let watchPath = null;
+  function driverAlerts() {
+    if (state.session.path !== watchPath) {  // sessione nuova o ritardo cambiato: si riparte da zero
+      watchPath = state.session.path;
+      for (const k in watchPrev) delete watchPrev[k];
+    }
+    const mine = new Set([prefs.follow, ...prefs.favs].filter(Boolean));
+    for (const d of state.drivers) {
+      const now = { inpit: !!d.inpit, stops: (d.pit_stops || []).length, pens: (d.stewards?.penalties || []).length,
+        of: !!d.last_of, last: d.last, out: !!(d.retired || d.stopped) };
+      const p = watchPrev[d.num];
+      watchPrev[d.num] = now;
+      if (!p || !mine.has(d.num)) continue;
+      // con la rossa entrano tutti in pit lane: non è una sosta, niente avviso
+      if (now.inpit && !p.inpit && isRace() && !isRedFlag()) say(`${d.tla} AI BOX`, d.colour, [[523, 0.15], [659, 0.15]], [200]);
+      if (now.stops > p.stops) {
+        const st = d.pit_stops.at(-1);
+        say(`${d.tla} fermo ${st.stop} s${st.lane ? ` · ${st.lane} s in pit lane` : ""}`, d.colour, [[659, 0.15], [523, 0.15]], [120]);
+      }
+      if (now.pens > p.pens) say(`${d.tla}: ${d.stewards.penalties.at(-1)}`, "#ff453a", [[330, 0.3], [330, 0.3]], [400, 150, 400]);
+      if (now.of && (!p.of || now.last !== p.last)) say(`${d.tla} GIRO PIÙ VELOCE ${d.last}`, "#c084ff", [[1047, 0.12], [1319, 0.12]], [100]);
+      if (now.out && !p.out) say(`${d.tla} ${d.retired ? "RITIRATO" : "FERMO IN PISTA"}`, "#ff453a", [[392, 0.4]], [500]);
+    }
+  }
+
+  /** Rischio pioggia dalla direzione gara ("RISK OF RAIN FOR THE F1 RACE IS 20%": c'è negli archivi)
+   *  e "PIOVE" quando WeatherData.Rainfall passa a 1 (negli archivi vale sempre 0: non verificato). */
+  let rainRisk = null, rainPath = null, wasRaining = false;
+  function rainInfo() {
+    if (state.session.path !== rainPath) { rainPath = state.session.path; rainRisk = null; wasRaining = null; }
+    for (const m of state.race_control) {  // in ordine dal più vecchio: vince l'ultimo
+      const r = /RISK OF RAIN[^%]*?(\d+)\s*%/i.exec(m.Message || "");
+      if (r) rainRisk = +r[1];
+    }
+    const w = state.weather, raining = String(w.rain) === "1";
+    if (raining && wasRaining === false) say("PIOVE", "#0a84ff", [[523, 0.2], [523, 0.2]], [300, 100, 300]);
+    wasRaining = raining;
+    $("#w-rain").textContent = raining ? "PIOVE" : w.rain == null && rainRisk == null ? "–"
+      : rainRisk != null ? `no · rischio ${rainRisk}%` : "no";
+  }
+
+  // ------------------------------------------------------------ sincronizza con la TV
+  /* In gara: Alex tocca "TV" quando in TV cambia il contagiri. La pagina sa quando lo ha visto
+   * cambiare lei (il contagiri del feed arriva entro 0,2 s dal leader sul traguardo, misurato a
+   * Monza). Due casi:
+   *  - la pagina ha già visto il giro nuovo: è in anticipo, il ritardo cresce della differenza;
+   *  - non l'ha ancora visto: è in ritardo sulla TV, si aspetta il giro nuovo e si toglie la differenza.
+   * Fra i due si sceglie la correzione più piccola, rispetto alla durata di un giro. Prima il conto
+   * "tocco − ultimo cambio visto" nel secondo caso prendeva il giro prima e alzava il ritardo di
+   * un giro intero. In prove e qualifica (niente contagiri) si usa l'orologio della sessione. */
+  let lapSeen = null, lapChangedAt = null, lapPeriod = null, tvPending = null;
+  function trackLapChange(lap, now = performance.now()) {
+    if (lap == null) return;
+    if (lapSeen != null && lap > lapSeen) {
+      if (lapChangedAt != null && lap === lapSeen + 1) lapPeriod = now - lapChangedAt;
+      lapChangedAt = now;
+      if (tvPending != null) {
+        const late = (now - tvPending) / 1000;
+        tvPending = null;
+        applyDelay(prefs.delay - late, `la pagina era ${late.toFixed(1)} s dietro la TV`);
+      }
+    }
+    lapSeen = lap;
+  }
+  function tvTap(now = performance.now()) {
+    if (!state) return;
+    if (state.session.lap == null) {  // prove e qualifica: orologio
+      const box = $("#tv-clock-box"); box.hidden = !box.hidden;
+      if (!box.hidden) { $("#tv-clock").value = ""; $("#tv-clock").focus(); tvState("scrivi l'orologio che vedi in TV"); }
+      return;
+    }
+    const since = lapChangedAt == null ? Infinity : now - lapChangedAt;
+    const half = (lapPeriod || 90000) / 2;
+    if (since < half) {
+      applyDelay(prefs.delay + since / 1000, `la pagina era ${(since / 1000).toFixed(1)} s avanti`);
+    } else {
+      tvPending = now;
+      tvState("aspetto il giro nuovo sulla pagina…");
+      setTimeout(() => { if (tvPending === now) { tvPending = null; tvState("nessun giro nuovo in 2 minuti: riprova"); } }, 120000);
+    }
+  }
+  /** Orologio: "23:10" o "1:02:30" → secondi. */
+  function parseClock(t) {
+    const parts = String(t || "").trim().split(":").map(Number);
+    if (parts.length < 2 || parts.length > 3 || parts.some((x) => isNaN(x))) return null;
+    return parts.reduce((acc, x) => acc * 60 + x, 0);
+  }
+  // l'orologio della pagina si legge quando Alex comincia a scrivere, cioè quando ha appena letto la TV
+  let clockPageAt = null;
+  function tvClockSync() {
+    const tv = parseClock($("#tv-clock").value);
+    if (tv == null || clockPageAt == null) { tvState("scrivi l'orologio come lo vedi in TV, es. 23:10"); return; }
+    // la TV mostra più tempo rimasto della pagina = pagina avanti: il ritardo cresce della differenza
+    applyDelay(prefs.delay + (tv - clockPageAt), "dall'orologio");
+    $("#tv-clock-box").hidden = true; clockPageAt = null;
+  }
+  const tvState = (t) => { $("#tv-state").textContent = t; };
+  function applyDelay(v, why) {
+    const d = Math.round(Math.min(299, Math.max(0, v)) * 10) / 10;
+    prefs.delay = d; save("delay", d); send({ delay: d });
+    $("#delay").value = d;
+    tvState(`ritardo ${d.toFixed(1)} s${why ? " · " + why : ""}`);
+    // cambiando ritardo lo stato salta nel tempo: si rilegge il contagiri e niente avvisi falsi
+    lapSeen = null; lapChangedAt = null; watchPath = null; lastTrackPath = null;
+  }
+
+  // per le prove automatiche da DevTools (nessun effetto sull'uso normale)
+  window.__muretto = {
+    rcImportant, tvTap, trackLapChange, applyDelay,
+    get beeps() { return beeps; }, get delay() { return prefs.delay; }, get tvPending() { return tvPending; },
+  };
 
   // ------------------------------------------------------------ prestazioni
   /** Top 5 di una classifica (settore o velocità), più il seguito se è fuori. */
@@ -919,7 +1153,22 @@
   });
   document.querySelectorAll(".tel-driver").forEach((sel) => sel.addEventListener("change", () => { prefs.telDrivers = [...document.querySelectorAll(".tel-driver")].map((s) => s.value); save("telDrivers", prefs.telDrivers); if (state) renderTelemetry(); }));
   $("#pit-loss").addEventListener("change", (e) => { const v = parseFloat(e.target.value); prefs.pitLoss = isNaN(v) ? null : v; save("pitLoss", prefs.pitLoss); if (state) render(); });
-  $("#delay").addEventListener("change", (e) => { prefs.delay = Math.max(0, parseInt(e.target.value) || 0); save("delay", prefs.delay); send({ delay: prefs.delay }); });
+  $("#delay").addEventListener("change", (e) => applyDelay(parseFloat(e.target.value) || 0, "a mano"));
+  $("#alerts-btn").addEventListener("click", activateAlerts);
+  $("#tv-btn").addEventListener("click", () => tvTap());
+  $("#tv-minus").addEventListener("click", () => applyDelay(prefs.delay - 1));
+  $("#tv-plus").addEventListener("click", () => applyDelay(prefs.delay + 1));
+  $("#tv-clock").addEventListener("input", () => { if (clockPageAt == null && state) clockPageAt = parseClock(state.session.remaining); });
+  $("#tv-clock").addEventListener("keydown", (e) => { if (e.key === "Enter") tvClockSync(); });
+  $("#tv-clock-ok").addEventListener("click", tvClockSync);
+  // avvisi già attivi da prima: il primo tocco sulla pagina rimette suono e schermo acceso
+  document.addEventListener("pointerdown", () => {
+    if (prefs.alerts && (!audio || audio.state !== "running")) { unlockAudio(); keepAwake().then((h) => { awakeHow = h; alertsUi(); }); }
+  }, { passive: true });
+  // il wakeLock si perde quando lo schermo si spegne o si cambia app: si riprende al ritorno
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden && prefs.alerts && audio) keepAwake().then((h) => { awakeHow = h; alertsUi(); });
+  });
   document.querySelectorAll("[data-panel]").forEach((cb) => cb.addEventListener("change", () => { prefs.panels[cb.dataset.panel] = cb.checked; save("panels", prefs.panels); chartKey = ""; if (state) render(); }));
   $("#opt-metrics").addEventListener("change", (e) => { prefs.metrics = e.target.checked; save("metrics", prefs.metrics); if (state) render(); });
   $("#opt-autoplay").addEventListener("change", (e) => { prefs.autoplay = e.target.checked; save("autoplay", prefs.autoplay); });
@@ -977,6 +1226,7 @@
   });
   applyMobileMode();
   setTab(prefs.tab);
+  alertsUi();
 
   connect();
 })();
