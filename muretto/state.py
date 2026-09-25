@@ -8,10 +8,11 @@ dall'ultima chiamata.
 
 from __future__ import annotations
 
+import statistics
 from collections import defaultdict, deque
 from dataclasses import dataclass
 
-from . import stewards, strategy
+from . import radio, stewards, strategy
 from .feed import STATIC_BASE
 
 TRACK_STATUS = {"1": "green", "2": "yellow", "4": "sc", "5": "red", "6": "vsc", "7": "vsc_ending"}
@@ -73,6 +74,10 @@ class Lap:
 class RaceState:
     def __init__(self):
         self.reset()
+        # testi dei radio (radio.Transcriber.results), messo dal server; None = trascrizione spenta.
+        # Fuori da reset(): la cache è per sessione e la gestisce il Transcriber
+        self.radio_text: dict | None = None
+        self._in_snapshot = False  # fuori da reset(): uno snapshot con sessione nuova chiama reset() a metà
 
     def reset(self):
         self.data: dict = {}
@@ -88,6 +93,8 @@ class RaceState:
         self.circuit_info: dict = {}  # da MultiViewer: pit_loss {normal, sc, vsc}, tracciato, curve
         self.last_ts: float = 0.0     # istante dell'ultimo messaggio, nel tempo del feed
         self._clock_at: float | None = None  # quando è arrivato l'ultimo ExtrapolatedClock
+        self._utc_samples: deque = deque(maxlen=30)  # tempo del feed − UTC (Heartbeat, direzione gara, radio)
+        self._last_utc_ts: float | None = None
         self._pit_lane: dict[str, list[dict]] = defaultdict(list)  # passaggi in pit lane, anche quelli già cancellati dalla F1
 
     # ------------------------------------------------------------------ ingresso
@@ -95,11 +102,44 @@ class RaceState:
     def apply(self, topic: str, data, ts: float):
         self.last_ts = ts
         if topic == "__snapshot__":
-            # SessionInfo per primo: se cambia sessione azzera lo stato, e non deve cancellare
-            # quello che è appena arrivato nello stesso snapshot
-            for t, d in sorted(data.items(), key=lambda kv: kv[0] != "SessionInfo"):
-                self.apply(t, d, ts)
+            self._in_snapshot = True
+            try:
+                self._apply_snapshot(data, ts)
+            finally:
+                self._in_snapshot = False
             return
+        self._apply_one(topic, data, ts)
+
+    def _apply_snapshot(self, data, ts: float):
+        # SessionInfo per primo: se cambia sessione azzera lo stato, e non deve cancellare
+        # quello che è appena arrivato nello stesso snapshot
+        for t, d in sorted(data.items(), key=lambda kv: kv[0] != "SessionInfo"):
+            self._apply_one(t, d, ts)
+
+    def _utc_sample(self, ts: float, utc: str | None):
+        """Un campione di (tempo del feed − UTC). Uno solo per istante: a fine archivio di Monza
+        arrivano ~80 Heartbeat con lo stesso tempo e orari UTC diversi (lo scarto derivava di
+        20 minuti e i radio finivano 13 giri indietro)."""
+        u = radio._utc(utc if not utc or utc.endswith("Z") else utc + "Z")
+        if u is None or ts == self._last_utc_ts:
+            return
+        self._last_utc_ts = ts
+        self._utc_samples.append(ts - u)
+
+    @property
+    def utc_offset(self) -> float | None:
+        return statistics.median(self._utc_samples) if self._utc_samples else None
+
+    def _apply_one(self, topic: str, data, ts: float):
+        # scarto fra tempo del feed e UTC, per mettere i radio sul giro giusto
+        if topic == "Heartbeat" and isinstance(data, dict):
+            self._utc_sample(ts, data.get("Utc"))
+        elif topic in ("RaceControlMessages", "TeamRadio") and not self._in_snapshot and isinstance(data, dict):
+            # i messaggi vecchi che arrivano tutti insieme nello snapshot hanno un Utc lontano da ts: esclusi
+            items = data.get("Messages") or data.get("Captures") or []
+            for m in (items.values() if isinstance(items, dict) else items):
+                if isinstance(m, dict):
+                    self._utc_sample(ts, m.get("Utc"))
         if topic == "ExtrapolatedClock":
             self._clock_at = ts
         if topic == "SessionInfo":
@@ -354,6 +394,19 @@ class RaceState:
             r["flying"] = {"after": done, "pred": strategy.format_lap(pred), "pred_s": round(pred, 3), "pos": pos, "verdict": verdict}
         return out
 
+    def _radio_extra(self, num: str, rel: str, cap: dict, info: dict) -> dict:
+        """Giro del radio (dall'ora nel nome del file) e testo trascritto, se c'è."""
+        out: dict = {"lap": None, "text": None, "status": "spenta" if self.radio_text is None else "in trascrizione", "hot": []}
+        rec = radio.recorded_utc(cap.get("Path", ""), info.get("GmtOffset"), cap.get("Utc"))
+        offset = self.utc_offset
+        if rec is not None and offset is not None:
+            out["lap"] = radio.lap_at(self.laps.get(num, []), rec + offset)
+        done = (self.radio_text or {}).get(rel)
+        if done:
+            out.update(text=done.get("text"), hot=[{"w": w, "it": radio.HOT[w]} for w in radio.hot_words(done.get("text"))],
+                       status="errore" if done.get("error") else "rumore" if done.get("noise") else "fatta")
+        return out
+
     def pit_stops(self) -> dict[str, list[dict]]:
         """Soste di gara con il tempo da fermo (PitStopSeries): solo in gara."""
         out = {}
@@ -578,7 +631,7 @@ class RaceState:
                 num = str(c.get("RacingNumber", ""))
                 rel = info.get("Path", "") + c["Path"]
                 radio.append({"utc": c.get("Utc", ""), "num": num, "tla": self.drivers.get(num, {}).get("Tla", num),
-                              "url": STATIC_BASE + rel, "path": rel})
+                              "url": STATIC_BASE + rel, "path": rel, **self._radio_extra(num, rel, c, info)})
         rc = self.data.get("RaceControlMessages", {}).get("Messages") or []
         if isinstance(rc, dict):
             rc = [rc[k] for k in sorted(rc, key=int)]

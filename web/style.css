@@ -257,7 +257,7 @@ body.show-metrics .metrics { display: table-cell; }
 #radio-list, #rc-list { list-style: none; margin: 0; padding: 0; max-height: 320px; overflow: auto; overscroll-behavior: contain; }
 #radio-list li.new { animation: flash 2s ease-out; }
 @keyframes flash { from { background: rgba(255, 212, 38, .22); } to { background: transparent; } }
-#radio-list li { display: grid; grid-template-columns: 56px 48px 1fr; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--line-soft); font-size: 12px; }
+#radio-list li { display: grid; grid-template-columns: auto 40px 1fr; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--line-soft); font-size: 12px; }
 #radio-list li .t { color: var(--muted); font-family: var(--mono); }
 #radio-list li .who { font-weight: 700; font-family: var(--mono); }
 #radio-list audio { width: 100%; height: 30px; }
@@ -482,3 +482,13 @@ body.m #leaderboard tr.cutrow td { display: block; border: 0; background: none; 
 /* ---------- dati fermi */
 #stale { position: sticky; top: 0; z-index: 40; margin: 8px 0 0; padding: 9px 12px; border-radius: var(--r-sm);
   background: var(--yellow); color: #07090c; font-weight: 700; font-size: 13px; text-align: center; }
+
+/* ---------- team radio trascritti */
+#radio-list li .rtxt { grid-column: 1 / -1; font-size: 13px; line-height: 1.4; color: var(--text); }
+#radio-list li .rtxt:empty { display: none; }
+#radio-list li .gloss { grid-column: 1 / -1; font-size: 11px; color: var(--yellow); }
+#radio-list li .gloss:empty { display: none; }
+#radio-list li.hot { box-shadow: inset 3px 0 0 var(--yellow); padding-left: 6px; }
+#radio-list mark { background: rgba(255, 212, 38, .2); color: var(--yellow); border-radius: 3px; padding: 0 2px; cursor: help; }
+#radio-list li[hidden] { display: none; }
+#radio-list li .t { white-space: nowrap; }
