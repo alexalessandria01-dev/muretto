@@ -17,6 +17,7 @@ from pathlib import Path
 import aiohttp
 from aiohttp import WSMsgType, web
 
+from . import calibration
 from .feed import STATIC_BASE, ArchiveFeed
 from .state import RaceState
 
@@ -80,6 +81,20 @@ class Hub:
             log.info("circuito %s: pit loss %s", self.state.circuit_info.get("name"), self.state.circuit_info.get("pit_loss"))
         except Exception as e:  # noqa: BLE001
             log.warning("MultiViewer non raggiungibile (%s): uso la tabella pit loss e la mappa dai GPS", e)
+            return
+        # in diretta il GPS non arriva: si impara dove stanno le macchine da una sessione già finita
+        if not isinstance(self.feed, ArchiveFeed) and self.state.circuit_info.get("map", {}).get("x"):
+            asyncio.create_task(self._calibrate(key, year, self._circuit_path or ""))
+
+    async def _calibrate(self, key: int, year: int, path: str):
+        try:
+            cal = await calibration.calibrate(self.state.circuit_info["map"], path, key, year)
+        except Exception:  # noqa: BLE001 - senza calibrazione la pagina stima comunque, a grandi linee
+            log.exception("calibrazione delle posizioni stimate fallita")
+            return
+        if cal and path == self._circuit_path:
+            self.state.circuit_info["map"]["seg_points"] = cal
+            self.state.circuit_info["rev"] = self.state.circuit_info.get("rev", 0) + 1
 
     async def broadcast(self):
         loop = asyncio.get_event_loop()

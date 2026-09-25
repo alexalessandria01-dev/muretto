@@ -422,6 +422,7 @@ class RaceState:
                 "remaining": self.remaining(),
                 "extrapolating": bool(clock.get("Extrapolating")),
                 "replay_position": self.replay_position,
+                "map_rev": self.circuit_info.get("rev", 0),  # cambia quando arriva la calibrazione
             },
             "weather": {
                 "air": w.get("AirTemp"), "track": w.get("TrackTemp"), "humidity": w.get("Humidity"),

@@ -428,10 +428,73 @@
     }
   }
 
+  // ------------------------------------------------------------ posizioni stimate (senza GPS)
+  // In diretta la F1 non manda le posizioni GPS a chi non è abbonato: arrivano solo i minisettori.
+  // Da quelli si ricava la frazione di giro e si mette la macchina in quel punto del tracciato.
+
+  /** Tracciato in ordine di marcia a partire dal traguardo, con la distanza progressiva.
+   *  Traguardo = inizio del settore commissari 1; verso = quello che porta alla curva 1. */
+  let trackModel = null;
+  function getTrackModel() {
+    if (trackModel?.src === mapData) return trackModel;
+    const pts = mapData.x.map((x, i) => [x, mapData.y[i]]), n = pts.length;
+    const nearest = (x, y) => { let best = 0, bd = Infinity; pts.forEach(([px, py], i) => { const d = (px - x) ** 2 + (py - y) ** 2; if (d < bd) { bd = d; best = i; } }); return best; };
+    const ms1 = mapData.marshal_sectors?.find((m) => Number(m.n) === 1);
+    const start = ms1 ? nearest(ms1.x, ms1.y) : 0;
+    const c1 = mapData.corners?.find((c) => Number(c.n) === 1);
+    const dir = c1 && (nearest(c1.x, c1.y) - start + n) % n > n / 2 ? -1 : 1;
+    const order = Array.from({ length: n }, (_, k) => pts[((start + dir * k) % n + n) % n]);
+    const cum = [0];
+    for (let k = 1; k <= n; k++) { const [ax, ay] = order[k - 1], [bx, by] = order[k % n]; cum.push(cum[k - 1] + Math.hypot(bx - ax, by - ay)); }
+    return (trackModel = { src: mapData, order, cum, total: cum[n] });
+  }
+  /** Punto del tracciato (coordinate originali) a una certa frazione di giro. */
+  function pointAt(frac) {
+    const { order, cum, total } = getTrackModel(), d = (((frac % 1) + 1) % 1) * total;
+    let lo = 0, hi = cum.length - 1;
+    while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (cum[mid] <= d) lo = mid; else hi = mid; }
+    const t = (d - cum[lo]) / ((cum[hi] - cum[lo]) || 1), a = order[lo % order.length], b = order[hi % order.length];
+    return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+  }
+  /** Stato nel giro: minisettori accesi di fila dall'inizio, su quanti sono in tutto.
+   *  Contare solo quelli "di fila" scarta i minisettori rimasti accesi dal giro prima.
+   *  Stessa regola di lap_state() in muretto/calibration.py: devono restare uguali. */
+  function lapState(d) {
+    const segs = d.sectors.flatMap((s) => s.seg);
+    if (!segs.length) return null;
+    let k = 0;
+    while (k < segs.length && segs[k]) k++;
+    return { k, n: segs.length };
+  }
+  /** Quando ogni macchina è entrata nello stato attuale (orologio della pagina). */
+  const stateSince = {};
+  /** Punto a una frazione `f` (0–1) di una spezzata. */
+  function along(path, f) {
+    const x = f * (path.length - 1), i = Math.floor(x), t = x - i, a = path[i], b = path[Math.min(i + 1, path.length - 1)];
+    return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+  }
+  /** Dove disegnare una macchina senza GPS. Con la calibrazione del server (sessione già
+   *  finita sullo stesso circuito) avanza lungo il tratto dello stato col tempo passato:
+   *  a Baku errore mediano 25 m. Senza, a metà del minisettore: ~180 m. */
+  function estimatedPoint(d) {
+    const s = lapState(d); if (!s) return null;
+    const now = performance.now() / 1000, seen = stateSince[d.num];
+    // appena aperta la pagina non si sa da quanto c'è: meglio il punto tipico che l'inizio del tratto
+    if (!seen || seen.k !== s.k) stateSince[d.num] = { k: s.k, t: now, known: !!seen };
+    const since = stateSince[d.num], cal = mapData.seg_points, st = cal && cal.n === s.n ? cal.states[s.k] : null;
+    if (st?.path && st.dur && since.known) return along(st.path, Math.min(0.95, (now - since.t) / st.dur));
+    if (st?.point) return st.point;
+    return pointAt((s.k + 0.5) / s.n);
+  }
+
   // ------------------------------------------------------------ mappa
+  let mapRev = -1;
   function loadMap() {
-    if (state.session.path === mapPath) return;
-    mapPath = state.session.path; mapData = null;
+    const rev = state.session.map_rev || 0;
+    if (state.session.path === mapPath && rev === mapRev) return;
+    // cambio sessione: via la mappa vecchia. Solo la calibrazione nuova: si tiene finché arriva
+    if (state.session.path !== mapPath) mapData = null;
+    mapPath = state.session.path; mapRev = rev;
     fetch("/api/map").then((r) => r.json()).then((m) => { if (m.x?.length) mapData = m; }).catch(() => {});
   }
   function yellowSectors() {
@@ -484,10 +547,26 @@
       ctx.fillStyle = "#2c323b"; for (const p of pts) { const [x, y] = P(p); ctx.fillRect(x - 1, y - 1, 2, 2); }
       $("#map-hint").textContent = "tracciato ricostruito dai GPS";
     }
+    // GPS vero se arriva (replay), altrimenti posizione stimata dai minisettori (diretta)
+    const gps = Object.keys(lastPos).length > 0, estimate = !gps && !!mapData;
+    if (estimate) {  // si aggiunge all'eventuale avviso di bandiera gialla, riscritto a ogni disegno
+      const h = $("#map-hint"), src = mapData.seg_points?.source;
+      h.textContent = (h.textContent ? h.textContent + " · " : "")
+        + (src ? `posizioni stimate dai minisettori, calibrate su ${src}` : "posizioni stimate a grandi linee dai minisettori")
+        + ": in diretta la F1 non manda il GPS";
+    }
     for (const d of state.drivers) {
-      const p = lastPos[d.num]; if (!p || d.retired || p.status !== "OnTrack") continue;
-      const [x, y] = P(R([p.x, p.y])), hi = d.num === prefs.follow, fav = isFav(d.num);
-      ctx.beginPath(); ctx.arc(x, y, hi ? 8 : fav ? 6.5 : 5, 0, Math.PI * 2); ctx.fillStyle = d.colour; ctx.fill();
+      let raw;
+      if (gps) {
+        const p = lastPos[d.num]; if (!p || d.retired || p.status !== "OnTrack") continue;
+        raw = [p.x, p.y];
+      } else if (estimate) {
+        if (d.retired || d.stopped || d.inpit) continue;
+        raw = estimatedPoint(d); if (!raw) continue;
+      } else continue;
+      const [x, y] = P(R(raw)), hi = d.num === prefs.follow, fav = isFav(d.num);
+      ctx.beginPath(); ctx.arc(x, y, hi ? 8 : fav ? 6.5 : 5, 0, Math.PI * 2); ctx.fillStyle = d.colour;
+      ctx.globalAlpha = estimate ? 0.85 : 1; ctx.fill(); ctx.globalAlpha = 1;
       if (hi || fav) { ctx.strokeStyle = hi ? "#fff" : "#3b82f6"; ctx.lineWidth = 2; ctx.stroke(); }
       ctx.fillStyle = "#e8eaed"; ctx.font = `${hi ? "bold 12px" : "11px"} monospace`; ctx.fillText(d.tla, x + 9, y + 4);
     }
