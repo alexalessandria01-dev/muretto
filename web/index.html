@@ -2,25 +2,36 @@
 <html lang="it">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#07090c">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Muretto">
 <title>Muretto</title>
 <link rel="stylesheet" href="/web/vendor/uPlot.min.css">
 <link rel="stylesheet" href="/web/style.css">
 </head>
-<body>
+<body data-tab="board">
 
 <header id="top">
-  <div class="brand">MURETTO <span class="sub" id="session-title">in attesa del feed…</span></div>
+  <div class="brand">
+    <span class="name">MURETTO</span>
+    <span class="sub" id="session-title">in attesa del feed…</span>
+  </div>
   <div id="track-status" class="pill green">—</div>
-  <div class="stat"><span class="k">GIRO</span><span class="v" id="lap">–</span></div>
-  <div class="stat"><span class="k">RESTANO</span><span class="v" id="remaining">–</span></div>
-  <div class="stat"><span class="k">ARIA</span><span class="v" id="w-air">–</span></div>
-  <div class="stat"><span class="k">PISTA</span><span class="v" id="w-track">–</span></div>
-  <div class="stat"><span class="k">VENTO</span><span class="v" id="w-wind">–</span></div>
-  <div class="stat"><span class="k">PIOGGIA</span><span class="v" id="w-rain">–</span></div>
-  <div class="stat" id="replay-box" hidden><span class="k">REPLAY</span><span class="v" id="replay-pos">–</span></div>
+  <div class="stat"><span class="k">Giro</span><span class="v" id="lap">–</span></div>
+  <div class="stat"><span class="k">Restano</span><span class="v" id="remaining">–</span></div>
+  <div class="stat"><span class="k">Aria</span><span class="v" id="w-air">–</span></div>
+  <div class="stat"><span class="k">Pista</span><span class="v" id="w-track">–</span></div>
+  <div class="stat"><span class="k">Vento</span><span class="v" id="w-wind">–</span></div>
+  <div class="stat"><span class="k">Umidità</span><span class="v" id="w-hum">–</span></div>
+  <div class="stat"><span class="k">Pressione</span><span class="v" id="w-press">–</span></div>
+  <div class="stat"><span class="k">Pioggia</span><span class="v" id="w-rain">–</span></div>
+  <div class="stat" id="replay-box" hidden><span class="k">Replay</span><span class="v" id="replay-pos">–</span></div>
   <div id="conn" class="dot" title="connessione"></div>
 </header>
+
+<button id="settings-toggle" type="button" aria-expanded="false" aria-controls="settings">Impostazioni</button>
 
 <nav id="settings">
   <label>Segui <select id="follow"></select></label>
@@ -41,13 +52,16 @@
   <span class="hint">★ clicca un pilota in tabella per i preferiti</span>
 </nav>
 
+<!-- Scheda del pilota seguito: solo su telefono, sempre visibile sopra le schede. -->
+<section id="hero" class="panel" aria-label="Pilota seguito"></section>
+
 <main>
   <section id="board" class="panel">
     <table id="leaderboard">
       <thead><tr>
-        <th>P</th><th>Pilota</th><th></th><th class="r">Gap</th><th class="r">Int</th>
-        <th class="r">Ultimo</th><th class="r">Migliore</th><th>Settori</th>
-        <th>Gomma</th><th class="r">Soste</th><th>Stint</th><th class="metrics">Auto</th>
+        <th>P</th><th>Pilota</th><th></th><th class="r">Gap</th><th class="r col-int">Int</th>
+        <th class="r">Ultimo</th><th class="r col-best">Migliore</th><th class="col-sectors">Settori</th>
+        <th>Gomma</th><th class="r col-stops">Soste</th><th class="col-stints">Stint</th><th class="metrics">Auto</th>
       </tr></thead>
       <tbody></tbody>
     </table>
@@ -60,7 +74,11 @@
     </section>
 
     <section class="panel" id="wall">
-      <div class="panel-head"><h2>Muretto</h2><span class="hint">seguito + preferiti</span></div>
+      <div class="panel-head">
+        <h2>Muretto</h2>
+        <label><input type="checkbox" id="opt-wall-all"> Tutti i piloti</label>
+        <span class="hint" id="wall-hint">seguito + preferiti</span>
+      </div>
       <div id="wall-cards"></div>
     </section>
 
@@ -81,6 +99,7 @@
     <div class="charts">
       <div id="chart-speed"></div>
       <div id="chart-pedals"></div>
+      <div id="chart-rpm"></div>
       <div id="chart-gear"></div>
     </div>
   </section>
@@ -100,6 +119,18 @@
     <ul id="rc-list"></ul>
   </section>
 </main>
+
+<!-- Schede: solo su telefono, mostrano un pannello alla volta. -->
+<nav id="tabbar" aria-label="Pannelli">
+  <button data-tab="board" class="on">Tabellone</button>
+  <button data-tab="battle">Battaglia</button>
+  <button data-tab="wall">Muretto</button>
+  <button data-tab="gaps">Gap</button>
+  <button data-tab="telemetry">Telemetria</button>
+  <button data-tab="map">Mappa</button>
+  <button data-tab="radio">Radio</button>
+  <button data-tab="rc">Direzione</button>
+</nav>
 
 <script src="/web/vendor/uPlot.iife.min.js"></script>
 <script src="/web/app.js"></script>

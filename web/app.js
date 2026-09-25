@@ -15,7 +15,8 @@
   const prefs = {
     follow: store("follow", ""), favs: store("favs", []), telDrivers: store("telDrivers", []),
     panels: store("panels", {}), metrics: store("metrics", false), autoplay: store("autoplay", true), chime: store("chime", false),
-    delay: store("delay", 0), pitLoss: store("pitLoss", null),
+    delay: store("delay", 0), pitLoss: store("pitLoss", null), tab: store("tab", "board"),
+    wallAll: store("wallAll", false),
   };
   /** Pit loss in uso: quella scelta dall'utente, altrimenti quella del server (già adattata a SC/VSC). */
   const pitLossNow = () => prefs.pitLoss ?? state.pit_loss.value;
@@ -53,6 +54,29 @@
   const TRACK_LABEL = { green: "VERDE", yellow: "GIALLA", sc: "SAFETY CAR", vsc: "VSC", vsc_ending: "VSC FINISCE", red: "ROSSA" };
   const isRace = () => state?.session.type === "Race";
   const drsState = (v) => (v == null ? "" : v > 9 ? "on" : v === 8 ? "possible" : "off");
+  /** Modalità telefono: stessa soglia del CSS. */
+  const mq = window.matchMedia("(max-width: 720px)");
+  const isMobile = () => mq.matches;
+  /** Un pannello nascosto dal CSS ha larghezza 0: i grafici non vanno ridisegnati. */
+  const isVisible = (el) => !!el && el.offsetParent !== null && el.clientWidth > 0;
+
+  /** Tempo in pit lane: secondi per una sosta, minuti quando è una sospensione (bandiera rossa). */
+  function fmtPitTime(d) {
+    const s = parseFloat(d);
+    if (isNaN(s)) return esc(d);
+    return s < 90 ? `${s.toFixed(1)} s` : `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")} min`;
+  }
+  /** Direzione del vento in gradi → freccia che indica dove soffia. */
+  const windArrow = (deg) => "↑↗→↘↓↙←↖"[Math.round((((+deg || 0) % 360) + 360) % 360 / 45) % 8];
+  /** Le quattro rilevazioni di velocità, col viola di chi ha il record assoluto. */
+  function speedCells(d) {
+    const s = d.speeds; if (!s) return "";
+    const one = (k, label) => {
+      const v = s[k] || {};
+      return `<span class="sp ${v.of ? "of" : v.pf ? "pf" : ""}"><i>${label}</i>${esc(v.v) || "–"}</span>`;
+    };
+    return `<span class="speeds">${one("i1", "I1")}${one("i2", "I2")}${one("st", "TRAP")}${one("fl", "TRAG")}</span>`;
+  }
 
   function setOptions(sel, items, value) {
     sel.innerHTML = items.map(([v, label]) => `<option value="${esc(v)}">${esc(label)}</option>`).join("");
@@ -88,13 +112,16 @@
     $("#remaining").textContent = s.remaining || "–";
     $("#w-air").textContent = w.air ? `${w.air}°` : "–";
     $("#w-track").textContent = w.track ? `${w.track}°` : "–";
-    $("#w-wind").textContent = w.wind ? `${w.wind} m/s` : "–";
+    $("#w-wind").textContent = w.wind ? `${w.wind} m/s${w.wind_dir ? " " + windArrow(w.wind_dir) : ""}` : "–";
+    $("#w-hum").textContent = w.humidity ? `${w.humidity} %` : "–";
+    $("#w-press").textContent = w.pressure ? `${w.pressure} mb` : "–";
     $("#w-rain").textContent = w.rain == null ? "–" : (String(w.rain) === "1" ? "SÌ" : "no");
     $("#replay-box").hidden = s.replay_position == null;
     $("#replay-pos").textContent = fmtClock(s.replay_position);
     document.body.classList.toggle("show-metrics", prefs.metrics);
 
     renderControls();
+    renderHero();
     renderBoard();
     renderBattle();
     renderWall();
@@ -118,6 +145,13 @@
     const dl = $("#delay"); if (document.activeElement !== dl) dl.value = prefs.delay;
     for (const cb of document.querySelectorAll("[data-panel]")) { const on = prefs.panels[cb.dataset.panel] ?? true; cb.checked = on; $("#" + cb.dataset.panel).hidden = !on; }
     $("#opt-metrics").checked = prefs.metrics; $("#opt-autoplay").checked = prefs.autoplay; $("#opt-chime").checked = prefs.chime;
+    $("#opt-wall-all").checked = prefs.wallAll;
+    // le schede seguono i pannelli scelti; se sparisce quella aperta si torna al tabellone
+    for (const b of $("#tabbar").children) {
+      if (b.dataset.tab === "board") continue;
+      b.hidden = (prefs.panels[b.dataset.tab] ?? true) === false;
+    }
+    if (prefs.tab !== "board" && (prefs.panels[prefs.tab] ?? true) === false) setTab("board");
   }
 
   function defaultTelDriver(slot) {
@@ -126,11 +160,53 @@
     return [f, ahead?.num || behind?.num, behind?.num !== ahead?.num ? behind?.num : ""][slot] || "";
   }
 
+  /** Scheda del pilota seguito, in cima alla pagina su telefono. Riassume quello che i
+   *  pannelli Battaglia e Muretto dicono in grande, per non doverli aprire durante la gara. */
+  function renderHero() {
+    const el = $("#hero");
+    if (!isMobile()) { el.innerHTML = ""; return; }
+    const me = byNum(prefs.follow);
+    if (!me) { el.innerHTML = '<div class="empty">Scegli un pilota da seguire in <b>Impostazioni</b> per vederlo qui.</div>'; return; }
+
+    const ahead = state.drivers.find((d) => d.pos === me.pos - 1), behind = state.drivers.find((d) => d.pos === me.pos + 1);
+    const gained = me.gained == null || !isRace() ? ""
+      : me.gained > 0 ? `<span class="gained up">▲${me.gained}</span>` : me.gained < 0 ? `<span class="gained down">▼${-me.gained}</span>` : "";
+    const st = me.retired ? '<span class="status">RIT</span>' : me.stopped ? '<span class="status">FERMO</span>'
+      : me.inpit ? '<span class="status pit">BOX</span>' : me.pitout ? '<span class="status out">OUT</span>' : "";
+    const cell = (k, v) => `<div class="h-cell"><span class="k">${k}</span><span class="v">${v}</span></div>`;
+    // "leader" solo a chi è davvero primo: il gap è vuoto anche per i ritirati e per chi è a giri
+    const gapTxt = esc(me.gap) || (me.pos === 1 ? "leader" : "–");
+    const cells = isRace()
+      ? cell("Gap dal leader", gapTxt) + cell("Intervallo", esc(me.interval) || "–")
+        + cell("Ultimo giro", esc(me.last) || "–") + cell("Miglior giro", esc(me.best) || "–")
+      : cell("Ultimo giro", esc(me.last) || "–") + cell("Miglior giro", esc(me.best) || "–")
+        + cell("Distacco", gapTxt) + cell("Velocità trap", `${esc(me.speed_trap) || "–"}`);
+
+    let pit = "";
+    if (isRace() && !me.retired) {
+      const e = pitExit(me.num, pitLossNow());
+      pit = `<div class="h-pit">Se entra ora (${pitLossNow()} s): ${!e ? "—" : `esce <b>P${e.pos}</b>${e.lost > 0 ? ` <span class="warn">(−${e.lost})</span>` : ' <span class="good">(nessuna posizione persa)</span>'}`}</div>`;
+    }
+
+    el.innerHTML = `
+      <div class="h-top" style="border-left:0">
+        <span class="h-pos" style="color:${me.colour}">${me.pos}</span>
+        <span class="h-id"><span class="h-tla">${esc(me.tla)}${gained}${st}</span><span class="h-name">${esc(me.name)}</span></span>
+        <span class="h-tyre"><span class="tyre"><b class="${me.compound}"></b>${me.age} giri</span>
+          <span class="hint">griglia ${me.grid ?? "–"}</span></span>
+      </div>
+      <div class="h-grid">${cells}</div>
+      <div class="h-neigh battle">${whoRow(ahead, me, "ahead")}${whoRow(behind, me, "behind")}</div>
+      ${pit}`;
+  }
+
   function carCell(d) {
     const c = d.car; if (!c) return "";
     return `<span class="car"><span class="gear">${c.gear ?? ""}</span><span class="spd">${c.speed ?? ""}</span><span class="bars"><i class="th"><b style="width:${c.throttle || 0}%"></b></i><i class="br"><b style="width:${c.brake ? 100 : 0}%"></b></i></span></span>`;
   }
 
+  /** Riga aperta sul telefono: il tabellone si ricostruisce ogni mezzo secondo, va tenuta qui. */
+  let openNum = "";
   function renderBoard() {
     const part = state.session.part, quali = state.session.type === "Qualifying";
     const rows = state.drivers.map((d) => {
@@ -141,19 +217,19 @@
       const total = Math.max(1, d.stints.reduce((a, x) => a + (x.laps || 0), 0));
       const stints = d.stints.map((x) => `<b class="${x.compound}" style="width:${(100 * (x.laps || 0) / total).toFixed(1)}%" title="${x.compound} ${x.laps} giri${x.new ? "" : " (usata)"}"></b>`).join("");
       const danger = quali && part && ((part === 1 && d.pos > 15) || (part === 2 && d.pos > 10));
-      const cls = [d.num === prefs.follow ? "follow" : isFav(d.num) ? "fav" : "", d.retired || d.stopped ? "retired" : "", d.knocked_out ? "out" : "", danger ? "danger" : ""].join(" ");
+      const cls = [d.num === prefs.follow ? "follow" : isFav(d.num) ? "fav" : "", d.retired || d.stopped ? "retired" : "", d.knocked_out ? "out" : "", danger ? "danger" : "", d.num === openNum ? "open" : ""].join(" ");
       return `<tr class="${cls}" data-num="${d.num}">
         <td class="pos">${d.pos}</td>
-        <td><span class="drv"><i style="background:${d.colour}"></i>${esc(d.tla)}</span>${gained}${drs}${st}</td>
+        <td class="col-drv"><span class="drv"><i style="background:${d.colour}"></i>${esc(d.tla)}</span>${gained}${drs}${st}</td>
         <td class="star ${isFav(d.num) ? "on" : ""}" title="preferito">★</td>
-        <td class="r">${esc(d.gap)}</td>
-        <td class="r ${d.catching ? "catching" : ""}">${esc(d.interval)}</td>
-        <td class="r ${d.last_of ? "of" : d.last_pf ? "pf" : ""}">${esc(d.last)}</td>
-        <td class="r">${esc(d.best)}</td>
-        <td><span class="sectors">${sectors}</span></td>
-        <td><span class="tyre"><b class="${d.compound}"></b>${d.age}${d.new ? "" : '<span class="used">usata</span>'}</span></td>
-        <td class="r">${d.stops}</td>
-        <td><span class="stints">${stints}</span></td>
+        <td class="r col-gap">${esc(d.gap)}</td>
+        <td class="r col-int ${d.catching ? "catching" : ""}">${esc(d.interval)}</td>
+        <td class="r col-last ${d.last_of ? "of" : d.last_pf ? "pf" : ""}">${esc(d.last)}</td>
+        <td class="r col-best">${esc(d.best)}</td>
+        <td class="col-sectors"><span class="sectors">${sectors}</span></td>
+        <td class="col-tyre"><span class="tyre"><b class="${d.compound}"></b>${d.age}${d.new ? "" : '<span class="used">usata</span>'}</span></td>
+        <td class="r col-stops">${d.stops}</td>
+        <td class="col-stints"><span class="stints">${stints}</span></td>
         <td class="metrics">${carCell(d)}</td>
       </tr>`;
     });
@@ -193,7 +269,9 @@
   }
 
   function renderWall() {
-    const nums = [prefs.follow, ...prefs.favs.filter((n) => n !== prefs.follow)].filter(Boolean);
+    const mine = [prefs.follow, ...prefs.favs.filter((n) => n !== prefs.follow)].filter(Boolean);
+    const nums = prefs.wallAll ? state.drivers.map((d) => d.num) : mine;
+    $("#wall-hint").textContent = prefs.wallAll ? `tutti e ${state.drivers.length} i piloti` : "seguito + preferiti";
     const cards = nums.map(byNum).filter(Boolean).map((d) => {
       const loss = pitLossNow(), e = d.retired ? null : pitExit(d.num, loss), deg = d.deg;
       const exitTxt = !e ? "—" : `<span class="big ${e.lost > 0 ? "warn" : "good"}">P${e.pos}</span> ${e.lost > 0 ? `(−${e.lost})` : "(nessuna posizione persa)"}`
@@ -204,13 +282,22 @@
       const degTxt = !deg ? "servono 3 giri puliti" : `<span class="${deg.slope > 0.2 ? "bad" : deg.slope > 0.08 ? "warn" : "good"}">${deg.slope > 0 ? "+" : ""}${deg.slope.toFixed(3)} s/giro</span> su ${deg.laps} giri`;
       const uTxt = !u ? "nessuno dietro" : `<b>${esc(u.by)}</b> a ${u.interval} s: ${u.window ? '<span class="warn">in finestra</span>' : '<span class="good">fuori finestra</span>'}`
         + `<br>gli servono ${u.needs_per_lap} s/giro · gomme ${u.tyre_delta > 0 ? `mie +${u.tyre_delta} giri` : u.tyre_delta < 0 ? `sue +${-u.tyre_delta} giri` : "pari"}`;
-      return `<div class="card" style="border-left-color:${d.colour}">
+      const bs = d.best_speeds || {};
+      const bestSpd = ["i1", "i2", "st", "fl"].some((k) => bs[k])
+        ? `${bs.i1 || "–"} / ${bs.i2 || "–"} / ${bs.st || "–"} / ${bs.fl || "–"}` : "–";
+      const pt = d.pit_time || {};
+      const mark = d.num === prefs.follow ? "follow" : isFav(d.num) ? "fav" : "";
+      return `<div class="card ${mark}" style="border-left-color:${d.colour}">
         <h3>P${d.pos} ${esc(d.tla)} <small>${esc(d.name)}</small> <span class="tyre"><b class="${d.compound}"></b>${d.age} giri</span></h3>
         <div class="row"><span class="k">Ultimo / migliore</span><span class="v">${esc(d.last) || "–"} / ${esc(d.best) || "–"}</span></div>
-        <div class="row"><span class="k">Gap / intervallo</span><span class="v">${esc(d.gap) || "leader"} / ${esc(d.interval) || "–"}</span></div>
+        <div class="row"><span class="k">Gap / intervallo</span><span class="v">${esc(d.gap) || (d.pos === 1 ? "leader" : "–")} / ${esc(d.interval) || "–"}</span></div>
+        <div class="row"><span class="k">Velocità I1/I2/trap/trag</span><span class="v">${speedCells(d)}</span></div>
+        <div class="row"><span class="k">Record velocità</span><span class="v">${esc(bestSpd)}</span></div>
+        <div class="row"><span class="k">Giri / soste</span><span class="v">${d.laps || 0} / ${d.stops}</span></div>
+        ${pt.duration ? `<div class="row"><span class="k">Tempo in pit lane</span><span class="v">${fmtPitTime(pt.duration)}${pt.lap ? ` (giro ${esc(pt.lap)})` : ""}</span></div>` : ""}
         ${isRace() ? `<div class="row"><span class="k">Se entra ora</span><span class="v" style="text-align:right">${exitTxt}</span></div>
         <div class="row"><span class="k">Trend gomma (10 giri)</span><span class="v">${degTxt}</span></div>
-        <div class="row"><span class="k">Undercut da dietro</span><span class="v" style="text-align:right">${uTxt}</span></div>` : `<div class="row"><span class="k">Velocità trap</span><span class="v">${esc(d.speed_trap) || "–"} km/h</span></div>`}
+        <div class="row"><span class="k">Undercut da dietro</span><span class="v" style="text-align:right">${uTxt}</span></div>` : ""}
       </div>`;
     });
     $("#wall-cards").innerHTML = cards.join("") || '<div class="hint">segui un pilota o segna dei preferiti (★) per vederli qui</div>';
@@ -220,6 +307,7 @@
   let gapChart, gapKey = "";
   function renderGaps() {
     const el = $("#chart-gaps");
+    if ($("#gaps").hidden || !isVisible(el)) return;
     if (!isRace()) { el.innerHTML = '<div class="hint">disponibile in gara</div>'; gapChart?.destroy(); gapChart = null; gapKey = ""; return; }
     const me = byNum(prefs.follow);
     const nums = [...new Set([prefs.follow, me && state.drivers.find((d) => d.pos === me.pos - 1)?.num, me && state.drivers.find((d) => d.pos === me.pos + 1)?.num, ...prefs.favs].filter(Boolean))];
@@ -281,7 +369,7 @@
     const series = [{ label: "s" }];
     for (const n of nums) {
       const c = colourOf(n), tla = tlaOf(n);
-      if (kind === "speed") series.push({ label: tla, stroke: c, width: 2, spanGaps: true });
+      if (kind === "speed" || kind === "rpm") series.push({ label: tla, stroke: c, width: 2, spanGaps: true });
       else if (kind === "pedals") { series.push({ label: `${tla} gas`, stroke: c, width: 1.5, spanGaps: true }); series.push({ label: `${tla} freno`, stroke: c, width: 1.5, dash: [4, 3], spanGaps: true }); }
       else series.push({ label: tla, stroke: c, width: 2, spanGaps: true, paths: uPlot.paths.stepped({ align: 1 }) });
     }
@@ -289,29 +377,32 @@
   }
   let chartKey = "";
   function renderTelemetry() {
-    if ($("#telemetry").hidden) return;
+    if ($("#telemetry").hidden || !isVisible($("#telemetry"))) return;
     const nums = selected(), key = nums.join(",");
-    const els = { speed: $("#chart-speed"), pedals: $("#chart-pedals"), gear: $("#chart-gear") };
+    const els = { speed: $("#chart-speed"), pedals: $("#chart-pedals"), rpm: $("#chart-rpm"), gear: $("#chart-gear") };
     if (key !== chartKey) {
       chartKey = key;
       for (const k of Object.keys(els)) { charts[k]?.destroy(); els[k].innerHTML = ""; }
       charts.speed = mkChart(els.speed, { series: buildSeries("speed", nums), scales: { x: { time: false }, y: { range: [0, 360] } } });
       charts.pedals = mkChart(els.pedals, { series: buildSeries("pedals", nums), scales: { x: { time: false }, y: { range: [0, 100] } } });
+      charts.rpm = mkChart(els.rpm, { height: 120, series: buildSeries("rpm", nums), scales: { x: { time: false }, y: { range: [0, 13000] } } });
       charts.gear = mkChart(els.gear, { height: 110, series: buildSeries("gear", nums), scales: { x: { time: false }, y: { range: [0, 8] } } });
     }
     if (!nums.length) return;
     const now = Math.max(0, ...nums.map((n) => tel[n]?.at(-1)?.t ?? 0));
-    const tables = { speed: [], pedals: [], gear: [] };
+    const tables = { speed: [], pedals: [], rpm: [], gear: [] };
     for (const n of nums) {
       const rows = (tel[n] || []).filter((s) => s.t >= now - WINDOW);
       const xs = rows.map((s) => +(s.t - now).toFixed(2));
       tables.speed.push([xs, rows.map((s) => s.speed)]);
       tables.pedals.push([xs, rows.map((s) => s.throttle), rows.map((s) => s.brake ? 100 : 0)]);
+      tables.rpm.push([xs, rows.map((s) => s.rpm)]);
       tables.gear.push([xs, rows.map((s) => s.gear)]);
     }
+    const H = { gear: 110, rpm: 120 };
     for (const k of Object.keys(tables)) {
       const joined = uPlot.join(tables[k]);
-      charts[k].setSize({ width: els[k].clientWidth || 800, height: k === "gear" ? 110 : 150 });
+      charts[k].setSize({ width: els[k].clientWidth || 800, height: H[k] || 150 });
       charts[k].setData(joined.length ? joined : [[]]);
       charts[k].setScale("x", { min: -WINDOW, max: 0 });
     }
@@ -334,7 +425,7 @@
     return on;
   }
   function renderMap() {
-    if ($("#map").hidden) return;
+    if ($("#map").hidden || !isVisible($("#map"))) return;
     loadMap();
     const cv = $("#map-canvas"), ctx = cv.getContext("2d");
     ctx.clearRect(0, 0, cv.width, cv.height);
@@ -385,9 +476,17 @@
   // ------------------------------------------------------------ controlli
   $("#follow").addEventListener("change", (e) => { prefs.follow = e.target.value; save("follow", prefs.follow); prefs.telDrivers = []; save("telDrivers", []); document.querySelectorAll(".tel-driver").forEach((s) => { s.innerHTML = ""; }); chartKey = ""; if (state) render(); });
   $("#leaderboard").addEventListener("click", (e) => {
-    const td = e.target.closest("td.star"); if (!td) return;
-    const n = td.parentElement.dataset.num;
-    prefs.favs = isFav(n) ? prefs.favs.filter((x) => x !== n) : [...prefs.favs, n]; save("favs", prefs.favs); if (state) render();
+    const td = e.target.closest("td.star");
+    if (td) {
+      const n = td.parentElement.dataset.num;
+      prefs.favs = isFav(n) ? prefs.favs.filter((x) => x !== n) : [...prefs.favs, n]; save("favs", prefs.favs); if (state) render();
+      return;
+    }
+    // su telefono la riga si apre e mostra intervallo, miglior giro, settori, soste e stint
+    if (!isMobile()) return;
+    const tr = e.target.closest("tr[data-num]"); if (!tr) return;
+    openNum = openNum === tr.dataset.num ? "" : tr.dataset.num;
+    if (state) renderBoard();
   });
   document.querySelectorAll(".tel-driver").forEach((sel) => sel.addEventListener("change", () => { prefs.telDrivers = [...document.querySelectorAll(".tel-driver")].map((s) => s.value); save("telDrivers", prefs.telDrivers); if (state) renderTelemetry(); }));
   $("#pit-loss").addEventListener("change", (e) => { const v = parseFloat(e.target.value); prefs.pitLoss = isNaN(v) ? null : v; save("pitLoss", prefs.pitLoss); if (state) render(); });
@@ -396,7 +495,27 @@
   $("#opt-metrics").addEventListener("change", (e) => { prefs.metrics = e.target.checked; save("metrics", prefs.metrics); if (state) render(); });
   $("#opt-autoplay").addEventListener("change", (e) => { prefs.autoplay = e.target.checked; save("autoplay", prefs.autoplay); });
   $("#opt-chime").addEventListener("change", (e) => { prefs.chime = e.target.checked; save("chime", prefs.chime); });
+  $("#opt-wall-all").addEventListener("change", (e) => { prefs.wallAll = e.target.checked; save("wallAll", prefs.wallAll); if (state) renderWall(); });
   window.addEventListener("resize", () => { chartKey = ""; gapKey = ""; if (state) { renderTelemetry(); renderGaps(); } });
+
+  // ------------------------------------------------------------ schede e impostazioni (telefono)
+  /** Mostra un solo pannello. I grafici vanno ricostruiti: fino a un attimo prima avevano larghezza 0. */
+  function setTab(name) {
+    prefs.tab = name; save("tab", name);
+    document.body.dataset.tab = name;
+    for (const p of document.querySelectorAll("main .panel")) p.classList.toggle("tab-active", p.id === name);
+    for (const b of $("#tabbar").children) b.classList.toggle("on", b.dataset.tab === name);
+    chartKey = ""; gapKey = "";
+    if (state) { renderTelemetry(); renderGaps(); renderMap(); }
+  }
+  $("#tabbar").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) setTab(b.dataset.tab); });
+  $("#settings-toggle").addEventListener("click", (e) => {
+    const open = document.body.classList.toggle("settings-open");
+    e.currentTarget.setAttribute("aria-expanded", String(open));
+  });
+  /** Passando fra telefono e desktop cambia sia la scheda del pilota sia chi è visibile. */
+  mq.addEventListener("change", () => { chartKey = ""; gapKey = ""; if (state) render(); });
+  setTab(prefs.tab);
 
   connect();
 })();

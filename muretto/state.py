@@ -217,6 +217,26 @@ class RaceState:
                     out.append(secs)
         return out
 
+    def pit_times(self) -> dict[str, dict]:
+        """Tempo passato in pit lane, per pilota: quello vero della sessione, non la stima."""
+        plc = self.data.get("PitLaneTimeCollection", {}).get("PitTimes") or {}
+        out = {}
+        for num, v in plc.items():
+            if isinstance(v, dict) and v.get("Duration"):
+                out[str(num)] = {"duration": v.get("Duration", ""), "lap": v.get("Lap")}
+        return out
+
+    @staticmethod
+    def _speeds(line: dict) -> dict:
+        """Le quattro rilevazioni di velocità: due intermedie, trappola e traguardo."""
+        sp = line.get("Speeds") or {}
+        out = {}
+        for k in ("I1", "I2", "ST", "FL"):
+            v = sp.get(k) if isinstance(sp, dict) else None
+            v = v if isinstance(v, dict) else {}
+            out[k.lower()] = {"v": v.get("Value", ""), "pf": bool(v.get("PersonalFastest")), "of": bool(v.get("OverallFastest"))}
+        return out
+
     def _sectors(self, line: dict) -> list[dict]:
         out = []
         secs = line.get("Sectors") or []
@@ -252,6 +272,7 @@ class RaceState:
         session_type = info.get("Type", "")
         part = self.data.get("TimingData", {}).get("SessionPart")
         stats = self.data.get("TimingStats", {}).get("Lines", {})
+        pit_times = self.pit_times()
 
         rows = []
         for num, drv in self.drivers.items():
@@ -310,6 +331,9 @@ class RaceState:
                 "retired": bool(line.get("Retired")),
                 "stopped": bool(line.get("Stopped")),
                 "speed_trap": ((line.get("Speeds") or {}).get("ST") or {}).get("Value", ""),
+                "speeds": self._speeds(line),
+                "best_speeds": {k.lower(): (v or {}).get("Value", "") for k, v in ((stats.get(num) or {}).get("BestSpeeds") or {}).items() if isinstance(v, dict)},
+                "pit_time": pit_times.get(num, {}),
                 "stints": stints,
                 "grid": grid,
                 "gained": (grid - pos) if grid and pos < 99 else None,
@@ -371,6 +395,7 @@ class RaceState:
             "weather": {
                 "air": w.get("AirTemp"), "track": w.get("TrackTemp"), "humidity": w.get("Humidity"),
                 "rain": w.get("Rainfall"), "wind": w.get("WindSpeed"), "wind_dir": w.get("WindDirection"),
+                "pressure": w.get("Pressure"),
             },
             "pit_loss": {"value": pit_loss, "normal": loss_normal, "sc": loss_sc, "vsc": loss_vsc,
                          "source": "MultiViewer" if mv else "tabella",
