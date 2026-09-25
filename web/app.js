@@ -53,6 +53,8 @@
   const colourOf = (n) => byNum(n)?.colour || "#888";
   const TRACK_LABEL = { green: "VERDE", yellow: "GIALLA", sc: "SAFETY CAR", vsc: "VSC", vsc_ending: "VSC FINISCE", red: "ROSSA" };
   const isRace = () => state?.session.type === "Race";
+  /** L'avviso "una sola mescola" serve da un terzo di gara in poi: al via ce l'hanno tutti. */
+  const mixDue = () => isRace() && state.session.lap && state.session.total_laps && state.session.lap >= state.session.total_laps / 3;
   const drsState = (v) => (v == null ? "" : v > 9 ? "on" : v === 8 ? "possible" : "off");
   /** Modalità telefono. Alcuni telefoni (es. col "sito desktop" attivo) dichiarano una
    *  larghezza da computer: per questo si può forzare a mano dalle impostazioni. */
@@ -196,7 +198,7 @@
         + cell("Distacco", gapTxt) + cell("Velocità trap", `${esc(me.speed_trap) || "–"}`);
 
     const cr = me.compounds;
-    const notes = stewardBadges(me) + (isRace() && cr && !cr.ok && !cr.wet && !me.retired ? '<span class="flagb mix">UNA SOLA MESCOLA</span>' : "")
+    const notes = stewardBadges(me) + (mixDue() && cr && !cr.ok && !cr.wet && !me.retired ? '<span class="flagb mix">UNA SOLA MESCOLA</span>' : "")
       + ((me.pit_stops || []).length ? `<span class="hint">soste: ${me.pit_stops.map((p) => `G${esc(p.lap)} ${esc(p.stop)} s`).join(" · ")}</span>` : "");
     let pit = "";
     if (isRace() && !me.retired) {
@@ -326,7 +328,7 @@
         ${stops ? `<div class="row"><span class="k">Soste</span><span class="v">${stops}</span></div>`
           : pt.duration ? `<div class="row"><span class="k">Tempo in pit lane</span><span class="v">${fmtPitTime(pt.duration)}${pt.lap ? ` (giro ${esc(pt.lap)})` : ""}</span></div>` : ""}
         ${isRace() ? `<div class="row"><span class="k">Sorpassi fatti</span><span class="v">${d.overtakes || 0}</span></div>` : ""}
-        ${isRace() && cr && !d.retired ? `<div class="row"><span class="k">Mescole usate</span><span class="v">${esc(cr.used.join(", ") || "–")}${cr.wet ? " · regola sospesa (pioggia)" : cr.ok ? ' <span class="good">✓</span>' : ' <span class="warn">deve ancora cambiare</span>'}</span></div>` : ""}
+        ${isRace() && cr && !d.retired ? `<div class="row"><span class="k">Mescole usate</span><span class="v">${esc(cr.used.join(", ") || "–")}${cr.wet ? " · regola sospesa (pioggia)" : cr.ok ? ' <span class="good">✓</span>' : mixDue() ? ' <span class="warn">deve ancora cambiare</span>' : ""}</span></div>` : ""}
         ${swTxt ? `<div class="row"><span class="k">Commissari</span><span class="v">${swTxt}</span></div>` : ""}
         ${isRace() ? `<div class="row"><span class="k">Se entra ora</span><span class="v" style="text-align:right">${exitTxt}</span></div>
         <div class="row"><span class="k">Trend gomma (10 giri)</span><span class="v">${degTxt}</span></div>
