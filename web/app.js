@@ -141,6 +141,7 @@
     renderMap();
     renderPerf();
     renderChamp();
+    renderCmp();
   }
 
   function renderControls() {
@@ -475,6 +476,94 @@
     }, [xs, ...drivers.map((d) => xs.map((i) => d.lap_positions[i] ?? null))], el);
   }
 
+  // ------------------------------------------------------------ confronto giri (archivio F1)
+  let cmpPath = null, cmpData = null, cmpKey = "";
+  const cmpCharts = {};
+  const cmpStatus = (t) => { $("#cmp-status").textContent = t; };
+
+  /** Sessioni del weekend già in archivio: si ricaricano quando cambia la sessione seguita. */
+  function renderCmp() {
+    if ($("#cmp").hidden || !isVisible($("#cmp"))) return;
+    if (cmpPath !== state.session.path) {
+      cmpPath = state.session.path;
+      fetch("/api/sessions").then((r) => r.json()).then((list) => {
+        const sel = $("#cmp-session");
+        if (!list.length) { sel.innerHTML = ""; cmpStatus("nessuna sessione di questo weekend è ancora in archivio"); return; }
+        setOptions(sel, list.map((s) => [s.path, s.name]), list.at(-1).path);
+        loadCmpLaps();
+      }).catch(() => cmpStatus("non riesco a leggere l'elenco delle sessioni"));
+    }
+    drawCmp();
+  }
+
+  function loadCmpLaps() {
+    const path = $("#cmp-session").value; if (!path) return;
+    cmpStatus("scarico la telemetria della sessione dall'archivio F1 (la prima volta ci vuole qualche secondo)…");
+    $("#cmp-go").disabled = true;
+    fetch(`/api/laps?path=${encodeURIComponent(path)}`).then((r) => r.ok ? r.json() : Promise.reject(r)).then(({ drivers }) => {
+      const items = drivers.map((d) => [d.num, `${d.tla} · ${d.time}`]);
+      // di default: il pilota seguito e i più veloci della sessione
+      const picks = [prefs.follow, ...drivers.map((d) => d.num)].filter((n, i, a) => n && drivers.some((d) => d.num === n) && a.indexOf(n) === i).slice(0, 3);
+      document.querySelectorAll(".cmp-driver").forEach((sel, i) => setOptions(sel, [["", "—"], ...items], picks[i] || ""));
+      $("#cmp-go").disabled = false;
+      cmpStatus(drivers.length ? "" : "in questa sessione non ci sono giri con telemetria");
+      if (drivers.length) runCompare();
+    }).catch(() => cmpStatus("archivio F1 non raggiungibile: riprova tra poco"));
+  }
+
+  function runCompare() {
+    const path = $("#cmp-session").value;
+    const nums = [...document.querySelectorAll(".cmp-driver")].map((s) => s.value).filter(Boolean);
+    if (!path || !nums.length) return;
+    cmpStatus("confronto i giri…");
+    fetch(`/api/compare?path=${encodeURIComponent(path)}&drivers=${nums.join(",")}`).then((r) => r.json()).then((data) => {
+      cmpData = data; cmpKey = "";
+      cmpStatus(data.skipped?.length ? `${data.skipped.join(", ")}: nessun giro con telemetria buona in questa sessione` : "");
+      drawCmp();
+    }).catch(() => cmpStatus("confronto non riuscito"));
+  }
+
+  function drawCmp() {
+    const box = $("#cmp-charts");
+    box.hidden = !cmpData?.drivers?.length;
+    if (box.hidden) { $("#cmp-summary").innerHTML = ""; return; }
+    const width = $("#cmp-speed").clientWidth || 800, key = `${width}|${JSON.stringify(cmpData.drivers.map((d) => [d.num, d.time]))}`;
+    if (key === cmpKey) return;
+    cmpKey = key;
+    const ds = cmpData.drivers;
+    // compagni di squadra hanno lo stesso colore: il secondo si disegna tratteggiato
+    const dashed = ds.map((d, i) => ds.slice(0, i).some((e) => e.colour === d.colour));
+    $("#cmp-summary").innerHTML = ds.map((d, i) => {
+      const gap = i === 0 ? "riferimento" : `+${d.delta.at(-1).toFixed(3)} s`;
+      return `<div class="row" style="border-left-color:${d.colour};border-left-style:${dashed[i] ? "dashed" : "solid"}"><b>${esc(d.tla)}</b>${dashed[i] ? '<span class="hint">(tratteggiato)</span>' : ""}<span>giro ${esc(d.lap)}</span><span>${esc(d.time)}</span>`
+        + `<span class="${i ? "warn" : "good"}">${gap}</span><span class="hint">punta ${d.top_speed ?? "–"} km/h</span>${d.note ? `<span class="note">${esc(d.note)}</span>` : ""}</div>`;
+    }).join("");
+    const x = cmpData.distance, corners = cmpData.corners || [];
+    // curve come riferimento sull'asse: si scrivono solo quelle abbastanza distanti da non sovrapporsi
+    const minGap = (x.at(-1) || 6000) / Math.max(4, width / 34), shown = new Set();
+    let lastLabel = -Infinity;
+    for (const c of [...corners].sort((a, b) => a.d - b.d)) if (c.d - lastLabel >= minGap) { shown.add(c.d); lastLabel = c.d; }
+    const xAxis = { stroke: "#8b93a1", grid: { stroke: "#23272e" },
+      splits: corners.length ? () => corners.map((c) => c.d) : undefined,
+      values: corners.length ? (u, vs) => vs.map((v) => { const c = corners.find((k) => k.d === v); return c && shown.has(v) ? `C${c.n}` : ""; }) : undefined };
+    const make = (id, field, opts = {}) => {
+      cmpCharts[id]?.destroy(); const el = $(`#cmp-${id}`); el.innerHTML = "";
+      cmpCharts[id] = new uPlot({
+        width, height: opts.height || 150, cursor: { sync: { key: "cmp" }, drag: { x: false, y: false } }, legend: { show: true },
+        scales: { x: { time: false }, y: opts.range ? { range: opts.range } : {} },
+        axes: [xAxis, { stroke: "#8b93a1", grid: { stroke: "#23272e" }, size: 46 }],
+        series: [{ label: "m", value: (u, v) => v == null ? "–" : `${Math.round(v)} m` },
+          ...ds.map((d, i) => ({ label: d.tla, stroke: d.colour, width: i === 0 ? 2 : 1.6, dash: dashed[i] ? [6, 4] : undefined,
+            paths: opts.stepped ? uPlot.paths.stepped({ align: 1 }) : undefined }))],
+      }, [x, ...ds.map((d) => d[field])], el);
+    };
+    make("delta", "delta", { height: 170 });
+    make("speed", "speed", { height: 190 });
+    make("throttle", "throttle", { range: [0, 100] });
+    make("brake", "brake", { height: 90, range: [0, 100], stepped: true });
+    make("gear", "gear", { height: 110, range: [0, 8], stepped: true });
+  }
+
   // ------------------------------------------------------------ campionato
   let champKey = "";
   function renderChamp() {
@@ -730,8 +819,8 @@
     document.body.dataset.tab = name;
     for (const p of document.querySelectorAll("main .panel")) p.classList.toggle("tab-active", p.id === name);
     for (const b of $("#tabbar").children) b.classList.toggle("on", b.dataset.tab === name);
-    chartKey = ""; gapKey = ""; lapKey = "";
-    if (state) { renderTelemetry(); renderGaps(); renderMap(); renderPerf(); }
+    chartKey = ""; gapKey = ""; lapKey = ""; cmpKey = "";
+    if (state) { renderTelemetry(); renderGaps(); renderMap(); renderPerf(); renderCmp(); }
   }
   $("#tabbar").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) setTab(b.dataset.tab); });
   $("#rc-filters").addEventListener("click", (e) => {
@@ -741,6 +830,8 @@
     rcKey = ""; incKey = ""; if (state) renderRaceControl();
   });
   for (const x of $("#rc-filters").children) x.classList.toggle("on", x.dataset.f === prefs.rcFilter);
+  $("#cmp-session").addEventListener("change", loadCmpLaps);
+  $("#cmp-go").addEventListener("click", runCompare);
   // toccando la fascia si aprono tutti i messaggi
   $("#rc-ticker").addEventListener("click", () => {
     if (isMobile()) setTab("rc");

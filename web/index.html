@@ -55,6 +55,7 @@
   <label><input type="checkbox" data-panel="rc" checked> Direzione gara</label>
   <label><input type="checkbox" data-panel="perf" checked> Prestazioni</label>
   <label><input type="checkbox" data-panel="champ" checked> Campionato</label>
+  <label><input type="checkbox" data-panel="cmp" checked> Confronto giri</label>
   <span class="sep"></span>
   <label><input type="checkbox" id="opt-metrics"> Marcia/velocità in tabella</label>
   <label><input type="checkbox" id="opt-autoplay" checked> Radio automatici</label>
@@ -154,6 +155,27 @@
     <div id="chart-laps"></div>
   </section>
 
+  <section class="panel" id="cmp">
+    <div class="panel-head"><h2>Confronto giri</h2></div>
+    <p class="explain">I giri migliori di due o tre piloti sovrapposti lungo la pista: velocità, gas, freno, marcia e <b>distacco metro per metro</b>, come nelle analisi di telemetria che si vedono dopo le sessioni. Funziona sulle sessioni già finite: la F1 pubblica la telemetria solo a sessione conclusa.</p>
+    <div class="cmp-controls">
+      <label>Sessione <select id="cmp-session"></select></label>
+      <label>1 <select class="cmp-driver"></select></label>
+      <label>2 <select class="cmp-driver"></select></label>
+      <label>3 <select class="cmp-driver"></select></label>
+      <button id="cmp-go" type="button">Confronta</button>
+    </div>
+    <div id="cmp-status" class="hint"></div>
+    <div id="cmp-summary"></div>
+    <div id="cmp-charts">
+      <h3 class="cmp-t">Distacco dal primo (s) <span class="hint">sopra lo zero = più lento</span></h3><div id="cmp-delta"></div>
+      <h3 class="cmp-t">Velocità (km/h)</h3><div id="cmp-speed"></div>
+      <h3 class="cmp-t">Gas (%)</h3><div id="cmp-throttle"></div>
+      <h3 class="cmp-t">Freno</h3><div id="cmp-brake"></div>
+      <h3 class="cmp-t">Marcia</h3><div id="cmp-gear"></div>
+    </div>
+  </section>
+
   <section class="panel" id="champ">
     <div class="panel-head"><h2>Campionato se finisse adesso</h2><span class="hint" id="champ-hint"></span></div>
     <div id="champ-body"></div>
@@ -172,6 +194,7 @@
   <button data-tab="rc">Direzione</button>
   <button data-tab="perf">Prestazioni</button>
   <button data-tab="champ">Campionato</button>
+  <button data-tab="cmp">Confronto</button>
 </nav>
 
 <script src="/web/vendor/uPlot.iife.min.js"></script>

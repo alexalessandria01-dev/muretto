@@ -62,8 +62,16 @@ class Track:
         self.total = self.cum[-1] or 1.0
 
     def frac_of(self, x: float, y: float) -> float:
-        i = min(range(len(self.order)), key=lambda j: (self.order[j][0] - x) ** 2 + (self.order[j][1] - y) ** 2)
-        return self.cum[i] / self.total
+        return self.cum[self.index_of(x, y)] / self.total
+
+    def index_of(self, x: float, y: float, prev: int | None = None, back: int = 15, ahead: int = 60) -> int:
+        """Punto del tracciato più vicino. Con ``prev`` cerca solo poco dietro e poco avanti
+        a dove era un istante prima: dove la pista passa vicino a se stessa (a Baku il tratto
+        a ~2,3 km sfiora quello a ~4,8 km) la ricerca su tutto il giro salterebbe dall'uno
+        all'altro."""
+        n = len(self.order)
+        idx = range(n) if prev is None else [(prev + k) % n for k in range(-back, ahead + 1)]
+        return min(idx, key=lambda j: (self.order[j][0] - x) ** 2 + (self.order[j][1] - y) ** 2)
 
     def point_at(self, f: float) -> tuple[float, float]:
         d = (f % 1) * self.total

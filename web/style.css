@@ -103,7 +103,7 @@ input[type=number] { width: 66px; font-family: var(--mono); font-variant-numeric
 main {
   display: grid; gap: var(--gap); margin-top: var(--gap);
   grid-template-columns: minmax(0, 1fr) 470px;
-  grid-template-areas: "board side" "tel map" "radio rc" "perf champ";
+  grid-template-areas: "board side" "tel map" "radio rc" "perf champ" "cmp cmp";
 }
 #board { grid-area: board; }
 #side { grid-area: side; display: flex; flex-direction: column; gap: var(--gap); min-width: 0; }
@@ -113,9 +113,10 @@ main {
 #rc { grid-area: rc; }
 #perf { grid-area: perf; }
 #champ { grid-area: champ; }
+#cmp { grid-area: cmp; }
 .panel[hidden] { display: none !important; }
 @media (max-width: 1100px) {
-  main { grid-template-columns: 1fr; grid-template-areas: "board" "side" "tel" "map" "radio" "rc" "perf" "champ"; }
+  main { grid-template-columns: 1fr; grid-template-areas: "board" "side" "tel" "map" "radio" "rc" "perf" "champ" "cmp"; }
 }
 .panel {
   background: linear-gradient(var(--panel-2), var(--panel) 120px);
@@ -453,3 +454,16 @@ body.m #tabbar button.on { color: var(--text); background: var(--panel-2); box-s
 .explain b { color: var(--text); font-weight: 600; }
 .big-hint { font-size: 13px; line-height: 1.5; padding: 14px; border-radius: var(--r-sm); background: var(--sunken); border: 1px dashed var(--line); }
 .ranks .rk .empty { font-size: 11px; color: var(--dim); }
+
+/* ---------- confronto giri */
+.cmp-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 10px; font-size: 12px; color: var(--muted); }
+.cmp-controls button { padding: 6px 14px; border-radius: var(--r-xs); background: var(--accent); color: #fff; font-weight: 700; }
+.cmp-controls button:disabled { opacity: .5; }
+#cmp-summary { display: flex; flex-direction: column; gap: 5px; margin: 8px 0 12px; }
+#cmp-summary .row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; font-family: var(--mono); font-size: 13px;
+  padding: 7px 10px; border-radius: var(--r-sm); background: var(--sunken); border-left: 4px solid var(--muted); }
+#cmp-summary .row .note { flex-basis: 100%; font-family: inherit; font-size: 11px; color: var(--yellow); }
+.cmp-t { margin: 12px 0 2px; font-size: 10px; font-weight: 650; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+#cmp-charts[hidden] { display: none; }
+body.m .cmp-controls label { flex: 1 1 45%; }
+body.m .cmp-controls select { width: 100%; }

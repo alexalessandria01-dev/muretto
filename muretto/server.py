@@ -17,8 +17,10 @@ from pathlib import Path
 import aiohttp
 from aiohttp import WSMsgType, web
 
-from . import calibration
-from .feed import STATIC_BASE, ArchiveFeed
+import re
+
+from . import calibration, compare
+from .feed import STATIC_BASE, ArchiveFeed, download_session, season_index
 from .state import RaceState
 
 log = logging.getLogger(__name__)
@@ -53,6 +55,8 @@ class Hub:
         self.clients: dict[web.WebSocketResponse, dict] = {}  # ws -> {"delay", "sent_state", "sent_tel"}
         self.history: deque = deque(maxlen=int(HISTORY / TICK))  # (t, snapshot_json, car, pos)
         self._circuit_path: str | None = None
+        self._cmp_cache: dict[str, compare.Session] = {}  # sessioni d'archivio lette per il confronto giri
+        self._cmp_locks: dict[str, asyncio.Lock] = {}
 
     async def ingest(self):
         async for topic, data, ts in self.feed:
@@ -175,6 +179,61 @@ class Hub:
     async def api_state(self, _request):
         return web.json_response(self.state.snapshot())
 
+    # ------------------------------------------------------------ confronto giri (archivio)
+    _SESSION_PATH = re.compile(r"^\d{4}/[\w-]+/[\w-]+/?$")
+
+    async def api_sessions(self, _request):
+        """Sessioni dello stesso weekend già in archivio: quelle su cui si possono confrontare i giri."""
+        info = self.state.data.get("SessionInfo") or {}
+        path = info.get("Path") or ""
+        meeting = (info.get("Meeting") or {}).get("Key")
+        out = []
+        if path[:4].isdigit() and meeting:
+            try:
+                idx = await season_index(int(path[:4]))
+            except Exception as e:  # noqa: BLE001
+                log.warning("indice della stagione non disponibile: %s", e)
+                idx = {}
+            for m in idx.get("Meetings", []):
+                if m.get("Key") == meeting:
+                    out = [{"path": s["Path"], "name": s.get("Name", "")} for s in m.get("Sessions", []) if s.get("Path")]
+        if isinstance(self.feed, ArchiveFeed) and path and all(o["path"] != path for o in out):
+            out.append({"path": path, "name": info.get("Name", "") + " (replay)"})
+        return web.json_response(out)
+
+    async def _compare_session(self, path: str) -> compare.Session:
+        """Scarica (una volta) e legge la sessione. Ne tiene in memoria al massimo tre."""
+        async with self._cmp_locks.setdefault(path, asyncio.Lock()):
+            track_map = (self.state.circuit_info or {}).get("map")
+            cached = self._cmp_cache.get(path)
+            # letta nei primi secondi dopo l'avvio, prima che arrivasse il tracciato: va riletta
+            if cached is not None and cached.track is None and track_map and track_map.get("x"):
+                del self._cmp_cache[path]
+            if path not in self._cmp_cache:
+                folder = await download_session(path, compare.TOPICS)
+                self._cmp_cache[path] = await asyncio.to_thread(compare.Session, folder, (self.state.circuit_info or {}).get("map"))
+                while len(self._cmp_cache) > 3:
+                    self._cmp_cache.pop(next(iter(self._cmp_cache)))
+            return self._cmp_cache[path]
+
+    async def api_laps(self, request: web.Request):
+        path = request.query.get("path", "")
+        if not self._SESSION_PATH.match(path):
+            raise web.HTTPBadRequest(text="sessione non valida")
+        try:
+            sess = await self._compare_session(path)
+        except aiohttp.ClientError as e:
+            raise web.HTTPBadGateway(text=f"archivio F1 non raggiungibile: {e}")
+        return web.json_response({"drivers": sess.best_laps()})
+
+    async def api_compare(self, request: web.Request):
+        path = request.query.get("path", "")
+        nums = [n for n in request.query.get("drivers", "").split(",") if n.isdigit()][:3]
+        if not self._SESSION_PATH.match(path) or not nums:
+            raise web.HTTPBadRequest(text="sessione o piloti non validi")
+        sess = await self._compare_session(path)
+        return web.json_response(await asyncio.to_thread(compare.compare, sess, nums))
+
     async def api_map(self, _request):
         return web.json_response(self.state.circuit_info.get("map") or {})
 
@@ -208,6 +267,9 @@ def make_app(feed) -> web.Application:
     app.router.add_get("/ws", hub.ws_handler)
     app.router.add_get("/api/state", hub.api_state)
     app.router.add_get("/api/map", hub.api_map)
+    app.router.add_get("/api/sessions", hub.api_sessions)
+    app.router.add_get("/api/laps", hub.api_laps)
+    app.router.add_get("/api/compare", hub.api_compare)
     app.router.add_get("/audio", hub.audio)
     app.router.add_static("/web", WEB_DIR)
 
