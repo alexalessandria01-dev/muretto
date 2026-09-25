@@ -348,8 +348,20 @@
   function chime() {
     try { const ac = new AudioContext(), o = ac.createOscillator(), g = ac.createGain(); o.frequency.value = 880; g.gain.value = 0.08; o.connect(g).connect(ac.destination); o.start(); o.stop(ac.currentTime + 0.25); } catch {}
   }
+  /** Fascia sempre in vista con l'ultimo messaggio: la direzione gara non deve stare dietro una scheda. */
+  function renderRcTicker(list) {
+    const el = $("#rc-ticker"), last = list[0];
+    el.hidden = !last;
+    if (!last) return;
+    el.className = `flag-${(last.Flag || "").replace(/\s+/g, "-")} cat-${last.Category || ""}`;
+    $("#rc-ticker-lap").textContent = last.Lap ? `G${last.Lap}` : "";
+    $("#rc-ticker-msg").textContent = last.Message || "";
+    $("#rc-ticker-more").textContent = list.length > 1 ? `+${list.length - 1}` : "";
+  }
+
   function renderRaceControl() {
     const list = [...state.race_control].reverse();
+    renderRcTicker(list);
     if (list.length === rcCount) return;
     if (chimeReady && prefs.chime && list.length > rcCount) chime();
     rcCount = list.length; chimeReady = true;
@@ -509,6 +521,11 @@
     if (state) { renderTelemetry(); renderGaps(); renderMap(); }
   }
   $("#tabbar").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) setTab(b.dataset.tab); });
+  // toccando la fascia si aprono tutti i messaggi
+  $("#rc-ticker").addEventListener("click", () => {
+    if (isMobile()) setTab("rc");
+    else $("#rc").scrollIntoView({ behavior: "smooth", block: "center" });
+  });
   $("#settings-toggle").addEventListener("click", (e) => {
     const open = document.body.classList.toggle("settings-open");
     e.currentTarget.setAttribute("aria-expanded", String(open));
