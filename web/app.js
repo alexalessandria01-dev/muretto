@@ -53,6 +53,11 @@
   const colourOf = (n) => byNum(n)?.colour || "#888";
   const TRACK_LABEL = { green: "VERDE", yellow: "GIALLA", sc: "SAFETY CAR", vsc: "VSC", vsc_ending: "VSC FINISCE", red: "ROSSA" };
   const isRace = () => state?.session.type === "Race";
+  /** Bandiera rossa: le macchine sono ferme in pit lane e le gomme si cambiano gratis, la finestra box non ha senso. */
+  const RED_PIT = "bandiera rossa: cambio gomme gratis";
+  const isRedFlag = () => state?.session.track === "red";
+  /** Soste, con quelle fatte a gara sospesa (gratis, ma la F1 le conta). */
+  const stopsTxt = (d) => `${d.stops}${d.free_stops ? ` (${d.free_stops} con la rossa)` : ""}`;
   /** L'avviso "una sola mescola" serve da un terzo di gara in poi (al via ce l'hanno tutti), e mai nella Sprint. */
   const mixDue = () => isRace() && state.session.name !== "Sprint" && state.session.lap && state.session.total_laps && state.session.lap >= state.session.total_laps / 3;
   const drsState = (v) => (v == null ? "" : v > 9 ? "on" : v === 8 ? "possible" : "off");
@@ -203,7 +208,7 @@
     let pit = "";
     if (isRace() && !me.retired) {
       const e = pitExit(me.num, pitLossNow());
-      pit = `<div class="h-pit">Se entra ora (${pitLossNow()} s): ${!e ? "—" : `esce <b>P${e.pos}</b>${e.lost > 0 ? ` <span class="warn">(−${e.lost})</span>` : ' <span class="good">(nessuna posizione persa)</span>'}`}</div>`;
+      pit = isRedFlag() ? `<div class="h-pit">${RED_PIT}</div>` : `<div class="h-pit">Se entra ora (${pitLossNow()} s): ${!e ? "—" : `esce <b>P${e.pos}</b>${e.lost > 0 ? ` <span class="warn">(−${e.lost})</span>` : ' <span class="good">(nessuna posizione persa)</span>'}`}</div>`;
     }
 
     el.innerHTML = `
@@ -256,7 +261,7 @@
         <td class="r col-best">${esc(d.best)}</td>
         <td class="col-sectors"><span class="sectors">${sectors}</span></td>
         <td class="col-tyre"><span class="tyre"><b class="${d.compound}"></b>${d.age}${d.new ? "" : '<span class="used">usata</span>'}</span></td>
-        <td class="r col-stops">${d.stops}</td>
+        <td class="r col-stops">${stopsTxt(d)}</td>
         <td class="col-stints"><span class="stints">${stints}</span></td>
         <td class="metrics">${carCell(d)}</td>
       </tr>`;
@@ -291,7 +296,7 @@
     if (isRace() && !me.retired) {
       const pl = state.pit_loss, n = pitExit(me.num, pitLossNormal()), sc = pitExit(me.num, pl.sc);
       const fmt = (r) => !r ? "–" : `<b>P${r.pos}</b>${r.lost > 0 ? ` (−${r.lost})` : ""}${r.behind ? `, dietro ${tlaOf(r.behind[0])} di ${r.behind[1]} s` : ""}${r.aheadOf ? `, davanti a ${tlaOf(r.aheadOf[0])} di ${r.aheadOf[1]} s` : ""}`;
-      exit = `<div class="exit">Se entra ora (${pitLossNow()} s): ${fmt(pitExit(me.num, pitLossNow()))}</div>` + (state.session.track === "green" ? `<div class="exit">Sotto Safety Car (${pl.sc} s): ${fmt(sc)}</div>` : `<div class="exit">In condizioni normali (${pitLossNormal()} s): ${fmt(n)}</div>`);
+      exit = isRedFlag() ? `<div class="exit">${RED_PIT}</div>` : `<div class="exit">Se entra ora (${pitLossNow()} s): ${fmt(pitExit(me.num, pitLossNow()))}</div>` + (state.session.track === "green" ? `<div class="exit">Sotto Safety Car (${pl.sc} s): ${fmt(sc)}</div>` : `<div class="exit">In condizioni normali (${pitLossNormal()} s): ${fmt(n)}</div>`);
     }
     $("#battle-body").innerHTML = `<div class="battle">${whoRow(ahead, me, "ahead")}${whoRow(me, me, "me")}${whoRow(behind, me, "behind")}</div>${exit}`;
   }
@@ -324,13 +329,13 @@
         <div class="row"><span class="k">Gap / intervallo</span><span class="v">${esc(d.gap) || (d.pos === 1 ? "leader" : "–")} / ${esc(d.interval) || "–"}</span></div>
         <div class="row"><span class="k">Velocità I1/I2/trap/trag</span><span class="v">${speedCells(d)}</span></div>
         <div class="row"><span class="k">Record velocità</span><span class="v">${esc(bestSpd)}</span></div>
-        <div class="row"><span class="k">Giri / soste</span><span class="v">${d.laps || 0} / ${d.stops}</span></div>
+        <div class="row"><span class="k">Giri / soste</span><span class="v">${d.laps || 0} / ${stopsTxt(d)}</span></div>
         ${stops ? `<div class="row"><span class="k">Soste</span><span class="v">${stops}</span></div>`
           : pt.duration ? `<div class="row"><span class="k">Tempo in pit lane</span><span class="v">${fmtPitTime(pt.duration)}${pt.lap ? ` (giro ${esc(pt.lap)})` : ""}</span></div>` : ""}
         ${isRace() ? `<div class="row"><span class="k">Sorpassi fatti</span><span class="v">${d.overtakes || 0}</span></div>` : ""}
         ${isRace() && cr && !d.retired ? `<div class="row"><span class="k">Mescole usate</span><span class="v">${esc(cr.used.join(", ") || "–")}${cr.wet ? " · regola sospesa (pioggia)" : cr.ok ? ' <span class="good">✓</span>' : mixDue() ? ' <span class="warn">deve ancora cambiare</span>' : ""}</span></div>` : ""}
         ${swTxt ? `<div class="row"><span class="k">Commissari</span><span class="v">${swTxt}</span></div>` : ""}
-        ${isRace() ? `<div class="row"><span class="k">Se entra ora</span><span class="v" style="text-align:right">${exitTxt}</span></div>
+        ${isRace() ? `<div class="row"><span class="k">Se entra ora</span><span class="v" style="text-align:right">${isRedFlag() ? RED_PIT : exitTxt}</span></div>
         <div class="row"><span class="k">Trend gomma (10 giri)</span><span class="v">${degTxt}</span></div>
         <div class="row"><span class="k">Undercut da dietro</span><span class="v" style="text-align:right">${uTxt}</span></div>` : ""}
       </div>`;

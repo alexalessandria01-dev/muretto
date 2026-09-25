@@ -108,3 +108,14 @@ def test_snapshot_applies_session_info_first():
     # sessione nuova: SessionInfo arriva dopo i piloti nel dizionario, ma va applicata prima
     st.apply("__snapshot__", {"DriverList": {"1": {"Tla": "NOR"}}, "SessionInfo": {"Path": "2026/a/fp2/"}}, 1.0)
     assert "1" in st.data.get("DriverList", {})
+
+
+def test_red_flag_stays_red_when_f1_sends_all_clear():
+    from muretto.state import RaceState
+    st = RaceState()
+    st.apply("SessionInfo", {"Type": "Race"}, 0.0)
+    st.apply("SessionStatus", {"Status": "Aborted"}, 10.0)
+    st.apply("TrackStatus", {"Status": "1", "Message": "AllClear"}, 20.0)  # a Monza un minuto dopo la rossa
+    assert st.snapshot()["session"]["track"] == "red"
+    st.apply("SessionStatus", {"Status": "Started"}, 30.0)
+    assert st.snapshot()["session"]["track"] == "green"

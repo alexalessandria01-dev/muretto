@@ -380,6 +380,10 @@ class RaceState:
         loss_vsc = mv.get("vsc") or round(loss_normal * 0.72, 1)
         ts_data = self.data.get("TrackStatus", {})
         track = TRACK_STATUS.get(str(ts_data.get("Status", "1")), "green")
+        # gara sospesa: un minuto dopo la rossa la F1 manda "AllClear" (a Monza a 3770 s, con la gara
+        # ferma fino a 5545 s) e la pagina tornava VERDE. Conta SessionStatus
+        if self.data.get("SessionStatus", {}).get("Status") == "Aborted":
+            track = "red"
         pit_loss = loss_sc if track == "sc" else loss_vsc if track in ("vsc", "vsc_ending") else loss_normal
         session_type = info.get("Type", "")
         part = self.data.get("TimingData", {}).get("SessionPart")
@@ -444,6 +448,9 @@ class RaceState:
                 "age": cur.get("laps", 0),
                 "new": cur.get("new", True),
                 "stops": line.get("NumberOfPitStops", 0),
+                # soste fatte a gara sospesa (cambio gomme gratis): la F1 le conta nelle soste. Si riconoscono
+                # dal passaggio in pit lane lungo quanto la sospensione (a Monza ~1840 s); verificato su 21 piloti su 22
+                "free_stops": sum(1 for p in self._pit_lane.get(num, []) if p["seconds"] > 300),
                 "laps": line.get("NumberOfLaps", 0),
                 "inpit": bool(line.get("InPit")),
                 "pitout": bool(line.get("PitOut")),
