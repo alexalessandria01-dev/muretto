@@ -39,6 +39,8 @@ FIXES = {
     r"in tres": "inters", r"inter's": "inters", r"d r s": "DRS", r"v s c": "VSC",
     r"tires": "tyres", r"tire": "tyre", r"under cut": "undercut", r"over cut": "overcut",
     r"bocks": "box", r"books box": "box box",
+    # "what a drive/race" a fine gara: a Monza whisper scriveva "water drive" e "water race"
+    r"water drive": "what a drive", r"water race": "what a race",
 }
 _FIX_RE = [(re.compile(rf"\b{k}\b", re.I), v) for k, v in FIXES.items()]
 

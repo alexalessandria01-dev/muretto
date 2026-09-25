@@ -55,3 +55,10 @@ def test_utc_offset_ignores_bursts_and_old_snapshot_messages():
     # nello snapshot iniziale i messaggi vecchi arrivano tutti ora: non devono contare
     st.apply("__snapshot__", {"RaceControlMessages": {"Messages": [{"Utc": "2026-09-06T11:00:00", "Message": "x"}] * 5}}, 1000.0)
     assert abs(st.utc_offset - good) < 1
+
+
+def test_clean_text_fixes_what_a_drive():
+    from muretto.radio import clean_text
+    # Monza 2026: whisper scriveva "water drive" / "water race" nei messaggi di fine gara
+    assert clean_text("Yes, give me water drive!") == "Yes, give me what a drive!"
+    assert "what a race" in clean_text("George, water race.").lower()
