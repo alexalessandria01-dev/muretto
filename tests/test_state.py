@@ -129,3 +129,16 @@ def test_overtakes_skip_the_count_21_entries():
     st.apply("OvertakeSeries", {"Overtakes": {"63": {"1": {"Timestamp": "b", "count": 21}}}}, 2.0)
     st.apply("OvertakeSeries", {"Overtakes": {"63": {"2": {"Timestamp": "c", "count": 2}}}}, 3.0)
     assert st.overtakes() == {"63": 3}
+
+
+def test_qualifying_cut_comes_from_no_entries():
+    from muretto.state import RaceState
+    st = RaceState()
+    st.apply("SessionInfo", {"Type": "Qualifying"}, 0.0)
+    lines = {str(n): {"Position": str(n), "BestLapTimes": [{"Value": f"1:22.{100 + n:03d}"}], "Sectors": []} for n in range(1, 23)}
+    st.apply("DriverList", {str(n): {"Tla": f"D{n:02d}"} for n in range(1, 23)}, 0.0)
+    st.apply("TimingData", {"SessionPart": 1, "NoEntries": [22, 16, 10], "Lines": lines}, 1.0)
+    s = st.snapshot()
+    assert s["session"]["cut"] == 16 and s["session"]["cut_tla"] == "D16"  # in Q1 passano 16, non 15
+    by = {r["tla"]: r for r in s["drivers"]}
+    assert by["D16"]["cut_gap"] > 0 and by["D17"]["cut_gap"] < 0

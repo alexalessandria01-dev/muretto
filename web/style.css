@@ -467,3 +467,14 @@ body.m #tabbar button.on { color: var(--text); background: var(--panel-2); box-s
 #cmp-charts[hidden] { display: none; }
 body.m .cmp-controls label { flex: 1 1 45%; }
 body.m .cmp-controls select { width: 100%; }
+
+/* ---------- qualifica: linea del taglio e giro lanciato */
+tr.cutrow td { padding: 3px 7px; font-size: 10px; font-weight: 800; letter-spacing: .1em; color: var(--red);
+  border-bottom: 2px dashed var(--red); background: rgba(255, 69, 58, .06); font-family: inherit; }
+body.m #leaderboard tr.cutrow { display: block; padding: 4px 8px; margin: 2px 0 9px; border: 0; border-bottom: 2px dashed var(--red);
+  border-radius: 0; background: none; }
+body.m #leaderboard tr.cutrow td { display: block; border: 0; background: none; }
+.flagb.fly { background: rgba(192, 132, 255, .16); color: var(--purple); }
+.flagb.fly.ok { background: rgba(46, 224, 106, .16); color: var(--green); }
+.flagb.fly.ko { background: rgba(255, 69, 58, .18); color: var(--red); }
+.flagb.fly.mid { background: rgba(255, 212, 38, .16); color: var(--yellow); }

@@ -291,6 +291,69 @@ class RaceState:
             return [v[k] for k in sorted(v, key=lambda k: int(k) if str(k).isdigit() else 0)]
         return v if isinstance(v, list) else []
 
+    def _qualifying(self, rows: list[dict], lines: dict, part: int) -> dict:
+        """Qualifica: taglio della parte in corso, margine di ognuno e previsione del giro lanciato.
+
+        - il taglio si legge da TimingData.NoEntries (a Monza 2026 [22, 16, 10]: in Q1 passano 16,
+          in Q2 10). Prima era scritto a mano a 15 e il 16° risultava eliminato;
+        - "cut_gap": per chi è dentro il margine sul primo eliminato, per chi è fuori quanto gli
+          manca per il tempo dell'ultimo che passa;
+        - "flying": appena un pilota chiude S1 (o S1+S2) di un giro nuovo la F1 svuota i settori
+          dopo; tempo previsto = settori fatti + suoi migliori settori per il resto. Solo per giri
+          veloci (entro 1,5 s dal migliore della parte) e scritta come stima.
+        """
+        no_entries = self.data.get("TimingData", {}).get("NoEntries") or []
+        cut = no_entries[part] if part < len(no_entries) else None
+
+        def part_best(num: str) -> float | None:
+            blt = (lines.get(num) or {}).get("BestLapTimes") if isinstance(lines.get(num), dict) else None
+            items = self._items(blt)
+            if part - 1 < len(items):
+                return strategy.lap_time_seconds((items[part - 1] or {}).get("Value"))
+            return None
+
+        times = {r["num"]: part_best(r["num"]) for r in rows}
+        ranked = [r for r in rows if times.get(r["num"])]
+        ranked.sort(key=lambda r: times[r["num"]])
+        fastest = times[ranked[0]["num"]] if ranked else None
+        out: dict = {"cut": cut}
+        cut_time = first_out = None
+        if cut and len(ranked) >= cut:
+            cut_time = times[ranked[cut - 1]["num"]]
+            out.update(cut_time=strategy.format_lap(cut_time), cut_tla=ranked[cut - 1]["tla"])
+            if len(ranked) > cut:
+                first_out = times[ranked[cut]["num"]]
+        for r in rows:
+            mine = times.get(r["num"])
+            r["part_best"] = strategy.format_lap(mine) if mine else ""
+            r["cut_gap"] = None
+            if cut and mine and cut_time:
+                if r["pos"] <= cut and first_out:
+                    r["cut_gap"] = round(first_out - mine, 3)   # dentro: margine sul primo eliminato
+                elif r["pos"] > cut:
+                    r["cut_gap"] = round(cut_time - mine, 3)    # fuori: negativo, quanto gli manca
+            r["flying"] = None
+            vals = [strategy.lap_time_seconds(sx.get("v")) for sx in r["sectors"]]
+            best = [strategy.lap_time_seconds(b.get("v")) for b in r["bests"]["sectors"]]
+            if len(vals) != 3 or len(best) != 3 or r["inpit"] or r["retired"] or r["knocked_out"]:
+                continue
+            done = 2 if vals[0] and vals[1] and not vals[2] else 1 if vals[0] and not vals[1] else 0
+            if not done or None in best[done:]:
+                continue
+            pred = sum(vals[:done]) + sum(best[done:])
+            # niente previsioni sui giri di lancio: serve un tempo di riferimento nella parte, un
+            # tempo previsto entro 1,5 s dal migliore e settori fatti non oltre 1 s dai suoi migliori
+            if not fastest or pred > fastest + 1.5 or sum(vals[:done]) - sum(best[:done]) > 1.0:
+                continue
+            others = [t for n, t in times.items() if t and n != r["num"]]
+            pos = 1 + sum(1 for t in others if t < min(pred, mine or pred))
+            verdict = None
+            if cut and cut_time:
+                target = cut_time if (r["pos"] > cut or not first_out) else first_out
+                verdict = "si salva" if pred < target - 0.15 else "non basta" if pred > target + 0.15 else "in bilico"
+            r["flying"] = {"after": done, "pred": strategy.format_lap(pred), "pred_s": round(pred, 3), "pos": pos, "verdict": verdict}
+        return out
+
     def pit_stops(self) -> dict[str, list[dict]]:
         """Soste di gara con il tempo da fermo (PitStopSeries): solo in gara."""
         out = {}
@@ -488,6 +551,7 @@ class RaceState:
                 "lap_positions": self._lap_positions(lap_series.get(num)),
             })
         rows.sort(key=lambda r: r["pos"])
+        quali = self._qualifying(rows, lines, part) if part else {}
         if session_type == "Race":
             strategy.fill_lapped_gaps(rows)  # i doppiati hanno "1 L": il distacco si ricava dagli intervalli
 
@@ -530,6 +594,7 @@ class RaceState:
                 "circuit": circuit,
                 "type": session_type,
                 "part": part,
+                **quali,  # taglio della parte in corso (qualifica): cut, cut_time, cut_tla
                 "path": info.get("Path", ""),
                 "status": self.data.get("SessionStatus", {}).get("Status", ""),
                 "track": track,

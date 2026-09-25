@@ -124,7 +124,9 @@
     const ts = $("#track-status"); ts.className = `pill ${s.track}`; ts.textContent = TRACK_LABEL[s.track] || s.track_msg;
     $("#lap").textContent = isRace() ? (s.lap ? `${s.lap}${s.total_laps ? " / " + s.total_laps : ""}` : "–") : (s.part ? `${s.name} · Q${s.part}` : s.name || "–");
     // a tempo scaduto le macchine chiudono l'ultimo giro: "00:00:00" con le auto in pista confonde
-    $("#remaining").textContent = ["Finished", "Finalised", "Ends"].includes(s.status) ? "finita"
+    // in qualifica la F1 manda "Finished" anche alla fine di Q1 e Q2 (a Monza a 1883 s, poi riparte)
+    $("#remaining").textContent = s.status === "Finished" && s.part && s.part < 3 ? `fine Q${s.part}`
+      : ["Finished", "Finalised", "Ends"].includes(s.status) ? "finita"
       : s.status === "Aborted" ? "sospesa" : s.remaining || "–";
     $("#w-air").textContent = w.air ? `${w.air}°` : "–";
     $("#w-track").textContent = w.track ? `${w.track}°` : "–";
@@ -199,11 +201,12 @@
     const cells = isRace()
       ? cell("Gap dal leader", gapTxt) + cell("Intervallo", esc(me.interval) || "–")
         + cell("Ultimo giro", esc(me.last) || "–") + cell("Miglior giro", esc(me.best) || "–")
-      : cell("Ultimo giro", esc(me.last) || "–") + cell("Miglior giro", esc(me.best) || "–")
-        + cell("Distacco", gapTxt) + cell("Velocità trap", `${esc(me.speed_trap) || "–"}`);
+      : cell("Ultimo giro", esc(me.last) || "–") + cell(state.session.part ? `Miglior Q${state.session.part}` : "Miglior giro", esc(me.part_best || me.best) || "–")
+        + cell("Distacco", gapTxt)
+        + (state.session.cut ? cell(`Taglio Q${state.session.part} (P${state.session.cut})`, cutTxt(me) || "–") : cell("Velocità trap", `${esc(me.speed_trap) || "–"}`));
 
     const cr = me.compounds;
-    const notes = stewardBadges(me) + (mixDue() && cr && !cr.ok && !cr.wet && !me.retired ? '<span class="flagb mix">UNA SOLA MESCOLA</span>' : "")
+    const notes = flyBadge(me) + stewardBadges(me) + (mixDue() && cr && !cr.ok && !cr.wet && !me.retired ? '<span class="flagb mix">UNA SOLA MESCOLA</span>' : "")
       + ((me.pit_stops || []).length ? `<span class="hint">soste: ${me.pit_stops.map((p) => `G${esc(p.lap)} ${esc(p.stop)} s`).join(" · ")}</span>` : "");
     let pit = "";
     if (isRace() && !me.retired) {
@@ -229,6 +232,16 @@
     return `<span class="car"><span class="gear">${c.gear ?? ""}</span><span class="spd">${c.speed ?? ""}</span><span class="bars"><i class="th"><b style="width:${c.throttle || 0}%"></b></i><i class="br"><b style="width:${c.brake ? 100 : 0}%"></b></i></span></span>`;
   }
 
+  /** Qualifica: giro lanciato in corso, con tempo previsto (settori fatti + suoi migliori) e verdetto. */
+  function flyBadge(d) {
+    const f = d.flying; if (!f) return "";
+    const cls = f.verdict === "si salva" ? "ok" : f.verdict === "non basta" ? "ko" : f.verdict ? "mid" : "";
+    return `<span class="flagb fly ${cls}" title="stima dopo S${f.after}: settori fatti + suoi migliori">▶ ${esc(f.pred)} P${f.pos}${f.verdict ? " · " + esc(f.verdict.toUpperCase()) : ""}</span>`;
+  }
+  /** Qualifica: quanto margine ha sul taglio (dentro) o quanto gli manca (fuori). */
+  const cutTxt = (d) => d.cut_gap == null ? "" : d.cut_gap >= 0
+    ? `dentro di ${d.cut_gap.toFixed(3)} s` : `fuori: serve ${d.cut_gap.toFixed(3)} s`;
+
   /** Penalità, indagini aperte e track limits: quello che un muretto guarda sui commissari. */
   function stewardBadges(d) {
     const s = d.stewards || {}, out = [];
@@ -249,11 +262,12 @@
       const sectors = d.sectors.map((s, i) => `<span class="sector"><span class="${s.of || d.best_sector_pos?.[i] === 1 ? "of" : s.pf ? "pf" : ""}">${esc(s.v) || "&nbsp;"}</span><span class="segs">${s.seg.map((x) => `<b class="s${x}"></b>`).join("")}</span></span>`).join("");
       const total = Math.max(1, d.stints.reduce((a, x) => a + (x.laps || 0), 0));
       const stints = d.stints.map((x) => `<b class="${x.compound}" style="width:${(100 * (x.laps || 0) / total).toFixed(1)}%" title="${x.compound} ${x.laps} giri${x.new ? "" : " (usata)"}"></b>`).join("");
-      const danger = quali && part && ((part === 1 && d.pos > 15) || (part === 2 && d.pos > 10));
+      // il taglio lo dice la F1 (NoEntries): con 22 macchine in Q1 passano 16, non 15
+      const cut = state.session.cut, danger = quali && part && cut && d.pos > cut;
       const cls = [d.num === prefs.follow ? "follow" : isFav(d.num) ? "fav" : "", d.retired || d.stopped ? "retired" : "", d.knocked_out ? "out" : "", danger ? "danger" : "", d.num === openNum ? "open" : ""].join(" ");
       return `<tr class="${cls}" data-num="${d.num}">
         <td class="pos">${d.pos}</td>
-        <td class="col-drv"><span class="drv"><i style="background:${d.colour}"></i>${esc(d.tla)}</span>${gained}${drs}${st}${stewardBadges(d)}</td>
+        <td class="col-drv"><span class="drv"><i style="background:${d.colour}"></i>${esc(d.tla)}</span>${gained}${drs}${st}${stewardBadges(d)}${flyBadge(d)}</td>
         <td class="star ${isFav(d.num) ? "on" : ""}" title="preferito">★</td>
         <td class="r col-gap">${esc(d.gap) || (d.pos === 1 ? '<span class="leader">LEADER</span>' : "")}</td>
         <td class="r col-int ${d.catching ? "catching" : ""}">${esc(d.interval)}</td>
@@ -266,6 +280,10 @@
         <td class="metrics">${carCell(d)}</td>
       </tr>`;
     });
+    // linea del taglio in qualifica, subito dopo l'ultimo che passa
+    const cut = state.session.cut;
+    if (quali && part && cut && state.session.cut_time && cut < rows.length)
+      rows.splice(cut, 0, `<tr class="cutrow"><td colspan="12">TAGLIO Q${part} · P${cut} ${esc(state.session.cut_tla)} ${esc(state.session.cut_time)}</td></tr>`);
     $("#leaderboard tbody").innerHTML = rows.join("");
   }
 
