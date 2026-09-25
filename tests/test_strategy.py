@@ -66,3 +66,28 @@ def test_undercut_threat():
     t = undercut_threat(interval_behind=1.8, pit_loss=24.0, my_tyre_age=20, their_tyre_age=5)
     assert t["window"] is True
     assert t["needs_per_lap"] > 0
+
+
+def test_compound_rule_needs_two_dry_compounds():
+    from muretto.strategy import compound_rule
+    assert compound_rule(["MEDIUM", "MEDIUM"]) == {"ok": False, "used": ["MEDIUM"], "wet": False}
+    assert compound_rule(["MEDIUM", "HARD"])["ok"]
+
+
+def test_compound_rule_lifted_in_the_wet():
+    from muretto.strategy import compound_rule
+    r = compound_rule(["INTERMEDIATE", "MEDIUM"])
+    assert r["ok"] and r["wet"] and r["used"] == ["MEDIUM"]
+
+
+def test_theoretical_best_sums_best_sectors():
+    from muretto.strategy import theoretical_best
+    r = theoretical_best(["27.225", "28.686", "27.593"], "1:23.504")
+    assert r["time"] == "1:23.504" and r["margin"] == 0.0
+    r = theoretical_best(["27.225", "28.586", "27.593"], "1:23.504")
+    assert r["time"] == "1:23.404" and r["margin"] == 0.1
+
+
+def test_theoretical_best_needs_all_three_sectors():
+    from muretto.strategy import theoretical_best
+    assert theoretical_best(["27.225", "", "27.593"], "1:23.504") is None

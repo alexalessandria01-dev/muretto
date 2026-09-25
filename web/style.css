@@ -103,7 +103,7 @@ input[type=number] { width: 66px; font-family: var(--mono); font-variant-numeric
 main {
   display: grid; gap: var(--gap); margin-top: var(--gap);
   grid-template-columns: minmax(0, 1fr) 470px;
-  grid-template-areas: "board side" "tel map" "radio rc";
+  grid-template-areas: "board side" "tel map" "radio rc" "perf champ";
 }
 #board { grid-area: board; }
 #side { grid-area: side; display: flex; flex-direction: column; gap: var(--gap); min-width: 0; }
@@ -111,9 +111,11 @@ main {
 #map { grid-area: map; }
 #radio { grid-area: radio; }
 #rc { grid-area: rc; }
+#perf { grid-area: perf; }
+#champ { grid-area: champ; }
 .panel[hidden] { display: none !important; }
 @media (max-width: 1100px) {
-  main { grid-template-columns: 1fr; grid-template-areas: "board" "side" "tel" "map" "radio" "rc"; }
+  main { grid-template-columns: 1fr; grid-template-areas: "board" "side" "tel" "map" "radio" "rc" "perf" "champ"; }
 }
 .panel {
   background: linear-gradient(var(--panel-2), var(--panel) 120px);
@@ -266,6 +268,44 @@ body.show-metrics .metrics { display: table-cell; }
 #rc-list li.flag-CHEQUERED { font-weight: 700; }
 #rc-list li.cat-SafetyCar { color: var(--yellow); font-weight: 700; }
 
+/* ---------- commissari: badge in tabella, filtri, incidenti */
+.flagb { display: inline-block; font-size: 9px; font-weight: 800; letter-spacing: .05em; padding: 2px 5px; border-radius: 4px; margin-left: 5px; font-family: inherit; vertical-align: 1px; }
+.flagb.tl { background: var(--line); color: var(--muted); }
+.flagb.tl.warn { background: rgba(255, 212, 38, .16); color: var(--yellow); }
+.flagb.tl.bad { background: rgba(255, 69, 58, .18); color: var(--red); }
+.flagb.pen { background: var(--red); color: #fff; }
+.flagb.inv { background: rgba(255, 212, 38, .16); color: var(--yellow); }
+.flagb.mix { background: rgba(77, 148, 255, .16); color: var(--blue); }
+.chips { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.chips button { font-size: 11px; padding: 4px 9px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+.chips button.on { color: var(--text); background: var(--panel-2); border-color: var(--muted); }
+#incidents:empty { display: none; }
+#incidents { margin-bottom: 10px; display: flex; flex-direction: column; gap: 6px; }
+.inc { display: grid; grid-template-columns: auto 1fr auto; gap: 4px 10px; align-items: baseline; font-size: 12px;
+  padding: 7px 10px; border-radius: var(--r-sm); background: var(--sunken); border-left: 3px solid var(--muted); }
+.inc.open { border-left-color: var(--yellow); }
+.inc.pen { border-left-color: var(--red); }
+.inc .who { font-family: var(--mono); font-weight: 700; }
+.inc .st { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.inc.open .st { color: var(--yellow); } .inc.pen .st { color: var(--red); }
+.inc .why { grid-column: 1 / -1; color: var(--muted); font-size: 11px; }
+
+/* ---------- prestazioni */
+.theo { width: 100%; margin-bottom: 12px; }
+.theo td, .theo th { padding: 4px 7px; }
+.ranks { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-bottom: 12px; }
+.ranks .rk h3 { margin: 0 0 6px; font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+.ranks .rk ol { margin: 0; padding: 0; list-style: none; font-family: var(--mono); font-size: 12px; }
+.ranks .rk li { display: flex; justify-content: space-between; gap: 6px; padding: 2px 0; border-bottom: 1px solid var(--line-soft); }
+.ranks .rk li.me { color: var(--text); font-weight: 800; }
+.ranks .rk li b { width: 4px; border-radius: 2px; flex: none; }
+.panel-head.sub { margin-top: 6px; }
+
+/* ---------- campionato */
+.champ { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; }
+.champ table td, .champ table th { padding: 4px 6px; }
+.champ .up { color: var(--green); } .champ .down { color: var(--red); }
+
 /* ---------- telemetria e mappa */
 .charts > div { margin-bottom: 6px; }
 #map-canvas { background: var(--sunken); border-radius: var(--r-sm); border: 1px solid var(--line); width: 100%; height: auto; }
@@ -379,6 +419,10 @@ body.m tr.open td.col-stints::before { content: "Stint"; }
 body.m.show-metrics tr.open td.metrics::before { content: "Auto"; }
 body.m tr.open .stints { display: inline-flex; width: 150px; }
 
+body.m .ranks { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+body.m .champ { grid-template-columns: 1fr; }
+body.m .theo .col-x { display: none; }
+
 /* liste più corte: ci pensa la scheda a dare spazio */
 body.m #radio-list, body.m #rc-list { max-height: none; }
 
@@ -403,3 +447,9 @@ body.m #tabbar button.on { color: var(--text); background: var(--panel-2); box-s
 @media (max-width: 380px) {
   body.m #hero .h-cell { flex: 1 1 100%; }
 }
+#hero .h-notes { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 10px; }
+#hero .h-notes .flagb { margin-left: 0; }
+.explain { margin: 0 0 10px; font-size: 12px; color: var(--muted); line-height: 1.45; }
+.explain b { color: var(--text); font-weight: 600; }
+.big-hint { font-size: 13px; line-height: 1.5; padding: 14px; border-radius: var(--r-sm); background: var(--sunken); border: 1px dashed var(--line); }
+.ranks .rk .empty { font-size: 11px; color: var(--dim); }

@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections import defaultdict, deque
 from dataclasses import dataclass
 
-from . import strategy
+from . import stewards, strategy
 from .feed import STATIC_BASE
 
 TRACK_STATUS = {"1": "green", "2": "yellow", "4": "sc", "5": "red", "6": "vsc", "7": "vsc_ending"}
@@ -257,6 +257,67 @@ class RaceState:
         return out
 
     @staticmethod
+    def _items(v) -> list:
+        """Liste del feed: arrivano come lista o come dict-indice {"0": ..., "1": ...}."""
+        if isinstance(v, dict):
+            return [v[k] for k in sorted(v, key=lambda k: int(k) if str(k).isdigit() else 0)]
+        return v if isinstance(v, list) else []
+
+    def pit_stops(self) -> dict[str, list[dict]]:
+        """Soste di gara con il tempo da fermo (PitStopSeries): solo in gara."""
+        out = {}
+        for num, stops in (self.data.get("PitStopSeries", {}).get("PitTimes") or {}).items():
+            rows = []
+            for s in self._items(stops):
+                p = (s or {}).get("PitStop") or {}
+                if p:
+                    rows.append({"lap": p.get("Lap"), "stop": p.get("PitStopTime", ""), "lane": p.get("PitLaneTime", "")})
+            out[str(num)] = rows
+        return out
+
+    def overtakes(self) -> dict[str, int]:
+        """Sorpassi fatti. Verificato sul GP d'Italia 2026: dopo un evento la posizione
+        del pilota migliora nel 74% dei casi e peggiora nel 7%."""
+        out = {}
+        for num, evs in (self.data.get("OvertakeSeries", {}).get("Overtakes") or {}).items():
+            out[str(num)] = sum(int((e or {}).get("count") or 0) for e in self._items(evs))
+        return out
+
+    def _lap_positions(self, entry) -> list[int]:
+        """Posizione a ogni giro (LapSeries): arriva anche nelle libere."""
+        out = []
+        for p in self._items((entry or {}).get("LapPosition")):
+            try:
+                out.append(int(p))
+            except (TypeError, ValueError):
+                out.append(None)
+        return out
+
+    def _bests(self, stat: dict, best_secs: list, best_lap: str) -> dict:
+        """Migliori settori e velocità con la posizione in classifica, e il giro teorico."""
+        sectors = [{"v": (b or {}).get("Value", ""), "pos": (b or {}).get("Position")} for b in best_secs]
+        speeds = {k.lower(): {"v": (v or {}).get("Value", ""), "pos": (v or {}).get("Position")}
+                  for k, v in (stat.get("BestSpeeds") or {}).items() if isinstance(v, dict)}
+        return {"sectors": sectors, "speeds": speeds,
+                "theoretical": strategy.theoretical_best([s["v"] for s in sectors], best_lap)}
+
+    def championship(self) -> dict:
+        """Campionato "se finisse adesso" (ChampionshipPrediction): solo in gara."""
+        cp = self.data.get("ChampionshipPrediction") or {}
+
+        def rows(d: dict, name_key: str) -> list[dict]:
+            out = []
+            for key, v in (d or {}).items():
+                if not isinstance(v, dict) or v.get("PredictedPoints") is None:
+                    continue
+                out.append({"key": str(v.get(name_key) or key), "pos": v.get("CurrentPosition"),
+                            "pred_pos": v.get("PredictedPosition"), "points": v.get("CurrentPoints"),
+                            "pred_points": v.get("PredictedPoints")})
+            return sorted(out, key=lambda r: (r["pred_pos"] or 99, -(r["pred_points"] or 0)))
+
+        return {"drivers": rows(cp.get("Drivers"), "RacingNumber"), "teams": rows(cp.get("Teams"), "TeamName")}
+
+    @staticmethod
     def _speeds(line: dict) -> dict:
         """Le quattro rilevazioni di velocità: due intermedie, trappola e traguardo."""
         sp = line.get("Speeds") or {}
@@ -303,6 +364,13 @@ class RaceState:
         part = self.data.get("TimingData", {}).get("SessionPart")
         stats = self.data.get("TimingStats", {}).get("Lines", {})
         pit_times = self.pit_times()
+        pit_stops = self.pit_stops()
+        overtakes = self.overtakes()
+        lap_series = self.data.get("LapSeries") or {}
+        rc_all = self.data.get("RaceControlMessages", {}).get("Messages") or []
+        if isinstance(rc_all, dict):
+            rc_all = [rc_all[k] for k in sorted(rc_all, key=int)]
+        steward = stewards.analyse([m for m in rc_all if isinstance(m, dict)])
 
         rows = []
         for num, drv in self.drivers.items():
@@ -371,6 +439,12 @@ class RaceState:
                 "car": {k: car.get(k) for k in ("speed", "gear", "throttle", "brake", "rpm", "drs")} if car else None,
                 "best_sector_pos": [(b or {}).get("Position") for b in best_secs] if best_secs else [],
                 "lap_history": [[l.lap, l.seconds, l.gap_s, l.position, l.clean, l.pit] for l in self.laps.get(num, [])],
+                "bests": self._bests(stats.get(num) or {}, best_secs, best.get("Value", "")),
+                "pit_stops": pit_stops.get(num, []),
+                "overtakes": overtakes.get(num, 0),
+                "compounds": strategy.compound_rule([st["compound"] for st in stints]),
+                "stewards": steward["drivers"].get(num, {"track_limits": 0, "penalties": [], "open": 0}),
+                "lap_positions": self._lap_positions(lap_series.get(num)),
             })
         rows.sort(key=lambda r: r["pos"])
 
@@ -435,4 +509,6 @@ class RaceState:
             "drivers": rows,
             "radio": radio[-40:],
             "race_control": rc,
+            "incidents": steward["incidents"][-30:],
+            "championship": self.championship(),
         }

@@ -48,6 +48,12 @@ TOPICS = [
     "TeamRadio",
     "CarData.z",
     "Position.z",
+    # LapSeries arriva sempre; gli altri tre solo in gara (verificati nell'archivio,
+    # in diretta senza abbonamento da confermare alla prima gara)
+    "PitStopSeries",
+    "ChampionshipPrediction",
+    "OvertakeSeries",
+    "LapSeries",
 ]
 
 

@@ -116,3 +116,34 @@ def undercut_threat(interval_behind: float | None, pit_loss: float, my_tyre_age:
         "needs_per_lap": round(needs, 2),
         "tyre_delta": my_tyre_age - their_tyre_age,
     }
+
+
+DRY = ("SOFT", "MEDIUM", "HARD")
+
+
+def compound_rule(compounds: list[str]) -> dict:
+    """Regola delle due mescole in gara asciutta: servono almeno due mescole da asciutto
+    diverse. Se si montano intermedie o da bagnato la regola non vale più."""
+    used = [c for c in dict.fromkeys(compounds) if c in DRY]
+    if any(c in ("INTERMEDIATE", "WET") for c in compounds):
+        return {"ok": True, "used": used, "wet": True}
+    return {"ok": len(used) >= 2, "used": used, "wet": False}
+
+
+def format_lap(seconds: float | None) -> str:
+    if seconds is None:
+        return ""
+    m, s = divmod(seconds, 60)
+    return f"{int(m)}:{s:06.3f}" if m else f"{s:.3f}"
+
+
+def theoretical_best(best_sectors: list[str], best_lap: str | None) -> dict | None:
+    """Giro teorico = somma dei migliori settori personali; il margine è quanto
+    il miglior giro vero ha lasciato sul tavolo rispetto a quella somma."""
+    secs = [lap_time_seconds(s) for s in best_sectors]
+    if len(secs) != 3 or any(s is None for s in secs):
+        return None
+    theo = round(sum(secs), 3)
+    best = lap_time_seconds(best_lap)
+    return {"time": format_lap(theo), "seconds": theo,
+            "margin": round(best - theo, 3) if best is not None else None}

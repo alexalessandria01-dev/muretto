@@ -16,7 +16,7 @@
     follow: store("follow", ""), favs: store("favs", []), telDrivers: store("telDrivers", []),
     panels: store("panels", {}), metrics: store("metrics", false), autoplay: store("autoplay", true), chime: store("chime", false),
     delay: store("delay", 0), pitLoss: store("pitLoss", null), tab: store("tab", "board"),
-    wallAll: store("wallAll", false), mobile: store("mobile", "auto"),
+    wallAll: store("wallAll", false), mobile: store("mobile", "auto"), rcFilter: store("rcFilter", "all"),
   };
   /** Pit loss in uso: quella scelta dall'utente, altrimenti quella del server (già adattata a SC/VSC). */
   const pitLossNow = () => prefs.pitLoss ?? state.pit_loss.value;
@@ -137,6 +137,8 @@
     renderRaceControl();
     renderTelemetry();
     renderMap();
+    renderPerf();
+    renderChamp();
   }
 
   function renderControls() {
@@ -190,6 +192,9 @@
       : cell("Ultimo giro", esc(me.last) || "–") + cell("Miglior giro", esc(me.best) || "–")
         + cell("Distacco", gapTxt) + cell("Velocità trap", `${esc(me.speed_trap) || "–"}`);
 
+    const cr = me.compounds;
+    const notes = stewardBadges(me) + (isRace() && cr && !cr.ok && !cr.wet && !me.retired ? '<span class="flagb mix">UNA SOLA MESCOLA</span>' : "")
+      + ((me.pit_stops || []).length ? `<span class="hint">soste: ${me.pit_stops.map((p) => `G${esc(p.lap)} ${esc(p.stop)} s`).join(" · ")}</span>` : "");
     let pit = "";
     if (isRace() && !me.retired) {
       const e = pitExit(me.num, pitLossNow());
@@ -204,6 +209,7 @@
           <span class="hint">griglia ${me.grid ?? "–"}</span></span>
       </div>
       <div class="h-grid">${cells}</div>
+      ${notes ? `<div class="h-notes">${notes}</div>` : ""}
       <div class="h-neigh battle">${whoRow(ahead, me, "ahead")}${whoRow(behind, me, "behind")}</div>
       ${pit}`;
   }
@@ -211,6 +217,15 @@
   function carCell(d) {
     const c = d.car; if (!c) return "";
     return `<span class="car"><span class="gear">${c.gear ?? ""}</span><span class="spd">${c.speed ?? ""}</span><span class="bars"><i class="th"><b style="width:${c.throttle || 0}%"></b></i><i class="br"><b style="width:${c.brake ? 100 : 0}%"></b></i></span></span>`;
+  }
+
+  /** Penalità, indagini aperte e track limits: quello che un muretto guarda sui commissari. */
+  function stewardBadges(d) {
+    const s = d.stewards || {}, out = [];
+    if (s.penalties?.length) out.push(`<span class="flagb pen" title="${esc(s.penalties.join(", "))}">PEN</span>`);
+    if (s.open) out.push('<span class="flagb inv" title="incidente in esame dai commissari">ESAME</span>');
+    if (s.track_limits) out.push(`<span class="flagb tl ${s.track_limits >= 4 ? "bad" : s.track_limits >= 3 ? "warn" : ""}" title="giri o tempi cancellati per track limits">TL${s.track_limits}</span>`);
+    return out.join("");
   }
 
   /** Riga aperta sul telefono: il tabellone si ricostruisce ogni mezzo secondo, va tenuta qui. */
@@ -228,7 +243,7 @@
       const cls = [d.num === prefs.follow ? "follow" : isFav(d.num) ? "fav" : "", d.retired || d.stopped ? "retired" : "", d.knocked_out ? "out" : "", danger ? "danger" : "", d.num === openNum ? "open" : ""].join(" ");
       return `<tr class="${cls}" data-num="${d.num}">
         <td class="pos">${d.pos}</td>
-        <td class="col-drv"><span class="drv"><i style="background:${d.colour}"></i>${esc(d.tla)}</span>${gained}${drs}${st}</td>
+        <td class="col-drv"><span class="drv"><i style="background:${d.colour}"></i>${esc(d.tla)}</span>${gained}${drs}${st}${stewardBadges(d)}</td>
         <td class="star ${isFav(d.num) ? "on" : ""}" title="preferito">★</td>
         <td class="r col-gap">${esc(d.gap) || (d.pos === 1 ? '<span class="leader">LEADER</span>' : "")}</td>
         <td class="r col-int ${d.catching ? "catching" : ""}">${esc(d.interval)}</td>
@@ -293,7 +308,10 @@
       const bs = d.best_speeds || {};
       const bestSpd = ["i1", "i2", "st", "fl"].some((k) => bs[k])
         ? `${bs.i1 || "–"} / ${bs.i2 || "–"} / ${bs.st || "–"} / ${bs.fl || "–"}` : "–";
-      const pt = d.pit_time || {};
+      const pt = d.pit_time || {}, cr = d.compounds, sw = d.stewards || {};
+      const stops = (d.pit_stops || []).map((p) => `G${esc(p.lap)} <b>${esc(p.stop)} s</b> fermo · ${esc(p.lane)} s in pit lane`).join("<br>");
+      const swTxt = [sw.track_limits ? `track limits ${sw.track_limits}` : "", ...(sw.penalties || []).map((p) => `<span class="bad">${esc(p)}</span>`),
+        sw.open ? `<span class="warn">${sw.open} in esame</span>` : ""].filter(Boolean).join(" · ");
       const mark = d.num === prefs.follow ? "follow" : isFav(d.num) ? "fav" : "";
       return `<div class="card ${mark}" style="border-left-color:${d.colour}">
         <h3>P${d.pos} ${esc(d.tla)} <small>${esc(d.name)}</small> <span class="tyre"><b class="${d.compound}"></b>${d.age} giri</span></h3>
@@ -302,7 +320,11 @@
         <div class="row"><span class="k">Velocità I1/I2/trap/trag</span><span class="v">${speedCells(d)}</span></div>
         <div class="row"><span class="k">Record velocità</span><span class="v">${esc(bestSpd)}</span></div>
         <div class="row"><span class="k">Giri / soste</span><span class="v">${d.laps || 0} / ${d.stops}</span></div>
-        ${pt.duration ? `<div class="row"><span class="k">Tempo in pit lane</span><span class="v">${fmtPitTime(pt.duration)}${pt.lap ? ` (giro ${esc(pt.lap)})` : ""}</span></div>` : ""}
+        ${stops ? `<div class="row"><span class="k">Soste</span><span class="v">${stops}</span></div>`
+          : pt.duration ? `<div class="row"><span class="k">Tempo in pit lane</span><span class="v">${fmtPitTime(pt.duration)}${pt.lap ? ` (giro ${esc(pt.lap)})` : ""}</span></div>` : ""}
+        ${isRace() ? `<div class="row"><span class="k">Sorpassi fatti</span><span class="v">${d.overtakes || 0}</span></div>` : ""}
+        ${isRace() && cr && !d.retired ? `<div class="row"><span class="k">Mescole usate</span><span class="v">${esc(cr.used.join(", ") || "–")}${cr.wet ? " · regola sospesa (pioggia)" : cr.ok ? ' <span class="good">✓</span>' : ' <span class="warn">deve ancora cambiare</span>'}</span></div>` : ""}
+        ${swTxt ? `<div class="row"><span class="k">Commissari</span><span class="v">${swTxt}</span></div>` : ""}
         ${isRace() ? `<div class="row"><span class="k">Se entra ora</span><span class="v" style="text-align:right">${exitTxt}</span></div>
         <div class="row"><span class="k">Trend gomma (10 giri)</span><span class="v">${degTxt}</span></div>
         <div class="row"><span class="k">Undercut da dietro</span><span class="v" style="text-align:right">${uTxt}</span></div>` : ""}
@@ -343,7 +365,7 @@
       radioSeen.add(r.path);
       const li = document.createElement("li");
       li.className = radioReady ? "new" : "";
-      li.innerHTML = `<span class="t">${localTime(r.utc)}</span><span class="who" style="color:${colourOf(r.num)}">${esc(r.tla)}</span><audio controls preload="none" src="/audio?p=${encodeURIComponent(r.path)}"></audio>`;
+      li.innerHTML = `<span class="t">${localTime(r.utc)}</span><span class="who" style="color:${colourOf(r.num)}">${esc(r.tla)}</span><audio controls preload="metadata" src="/audio?p=${encodeURIComponent(r.path)}"></audio>`;
       ul.prepend(li);
       if (radioReady && prefs.autoplay && (!prefs.follow || r.num === prefs.follow || isFav(r.num))) li.querySelector("audio").play().catch(() => {});
     }
@@ -367,14 +389,110 @@
     $("#rc-ticker-more").textContent = list.length > 1 ? `+${list.length - 1}` : "";
   }
 
+  const RC_FILTERS = {
+    all: () => true,
+    flag: (m) => m.Category === "Flag",
+    stewards: (m) => /STEWARD|INVESTIGAT|NOTED|PENALTY|REPRIMAND|BLACK AND WHITE|WARNING/.test(m.Message || ""),
+    limits: (m) => /TRACK LIMITS/.test(m.Message || ""),
+    sc: (m) => m.Category === "SafetyCar" || /SAFETY CAR|\bVSC\b/.test(m.Message || ""),
+  };
+  let rcKey = "", incKey = "";
+
+  /** Incidenti seguiti dal server dal "notato" all'esito: prima quelli ancora aperti. */
+  function renderIncidents() {
+    const el = $("#incidents"), show = prefs.rcFilter === "all" || prefs.rcFilter === "stewards";
+    const inc = show ? [...(state.incidents || [])].reverse().sort((a, b) => a.closed - b.closed) : [];
+    const key = JSON.stringify(inc);
+    if (key === incKey) return;
+    incKey = key;
+    el.innerHTML = inc.map((i) => {
+      const cls = !i.closed ? "open" : /penalit|stop|drive|squalif/.test(i.status) ? "pen" : "";
+      const where = [i.turn ? `curva ${i.turn}` : "", i.lap ? `G${i.lap}` : ""].filter(Boolean).join(" · ");
+      return `<div class="inc ${cls}"><span class="who">${esc(i.cars.map(tlaOf).join(" · "))}</span><span class="hint">${where}</span>`
+        + `<span class="st">${esc(i.status)}</span>${i.reason ? `<span class="why">${esc(i.reason.toLowerCase())}</span>` : ""}</div>`;
+    }).join("");
+  }
+
   function renderRaceControl() {
     const list = [...state.race_control].reverse();
     renderRcTicker(list);
-    if (list.length === rcCount) return;
-    if (chimeReady && prefs.chime && list.length > rcCount) chime();
-    rcCount = list.length; chimeReady = true;
-    $("#rc-list").innerHTML = list.map((m) => `<li class="flag-${esc(m.Flag || "")} cat-${esc(m.Category || "")}"><span class="lap">${m.Lap ? "G" + m.Lap : ""}</span><span>${esc(m.Message)}</span></li>`).join("")
-      || '<li class="hint">nessun messaggio</li>';
+    renderIncidents();
+    if (list.length !== rcCount) {
+      if (chimeReady && prefs.chime && list.length > rcCount) chime();
+      rcCount = list.length; chimeReady = true;
+    }
+    const key = `${prefs.rcFilter}:${list.length}`;
+    if (key === rcKey) return;
+    rcKey = key;
+    $("#rc-list").innerHTML = list.filter(RC_FILTERS[prefs.rcFilter] || RC_FILTERS.all)
+      .map((m) => `<li class="flag-${esc(m.Flag || "")} cat-${esc(m.Category || "")}"><span class="lap">${m.Lap ? "G" + m.Lap : ""}</span><span>${esc(m.Message)}</span></li>`).join("")
+      || '<li class="hint">nessun messaggio di questo tipo</li>';
+  }
+
+  // ------------------------------------------------------------ prestazioni
+  /** Top 5 di una classifica (settore o velocità), più il seguito se è fuori. */
+  function rankList(title, pick) {
+    const rows = state.drivers.map((d) => ({ d, r: pick(d) })).filter((x) => x.r?.pos && x.r.v).sort((a, b) => a.r.pos - b.r.pos);
+    const top = rows.slice(0, 5), me = rows.find((x) => x.d.num === prefs.follow);
+    if (me && !top.includes(me)) top.push(me);
+    if (!top.length) return `<div class="rk"><h3>${title}</h3><div class="empty">nessun tempo ancora</div></div>`;
+    return `<div class="rk"><h3>${title}</h3><ol>${top.map(({ d, r }) =>
+      `<li class="${d.num === prefs.follow ? "me" : ""}"><span>${r.pos}. <b style="background:${d.colour}">&nbsp;</b> ${esc(d.tla)}</span><span class="${r.pos === 1 ? "of" : ""}">${esc(r.v)}</span></li>`).join("")}</ol></div>`;
+  }
+
+  let lapChart, lapKey = "";
+  function renderPerf() {
+    if ($("#perf").hidden || !isVisible($("#perf"))) return;
+    // giro teorico: primi 10 più seguito e preferiti
+    const withTheo = state.drivers.filter((d) => d.bests?.theoretical).sort((a, b) => a.bests.theoretical.seconds - b.bests.theoretical.seconds);
+    const shown = withTheo.filter((d, i) => i < 10 || d.num === prefs.follow || isFav(d.num));
+    $("#perf-theo").innerHTML = !shown.length ? '<div class="hint">servono tre settori completati</div>'
+      : `<table class="theo"><thead><tr><th>#</th><th>Pilota</th><th class="r col-x">Migliore</th><th class="r">Teorico</th><th class="r">Lasciato</th></tr></thead><tbody>${shown.map((d) => {
+        const t = d.bests.theoretical, i = withTheo.indexOf(d) + 1;
+        return `<tr class="${d.num === prefs.follow ? "follow" : isFav(d.num) ? "fav" : ""}"><td>${i}</td><td><span class="drv"><i style="background:${d.colour}"></i>${esc(d.tla)}</span></td>`
+          + `<td class="r col-x">${esc(d.best) || "–"}</td><td class="r ${i === 1 ? "of" : ""}">${esc(t.time)}</td>`
+          + `<td class="r ${t.margin > 0.3 ? "warn" : ""}">${t.margin == null ? "–" : t.margin > 0 ? "+" + t.margin.toFixed(3) : "0.000"}</td></tr>`;
+      }).join("")}</tbody></table>`;
+    const sec = (i) => (d) => d.bests?.sectors?.[i], spd = (k) => (d) => d.bests?.speeds?.[k];
+    $("#perf-ranks").innerHTML = rankList("Settore 1", sec(0)) + rankList("Settore 2", sec(1)) + rankList("Settore 3", sec(2)) + rankList("Trappola km/h", spd("st"));
+
+    // posizioni giro per giro: tutti, in evidenza seguito e preferiti
+    const el = $("#chart-laps"), drivers = state.drivers.filter((d) => d.lap_positions?.length > 1);
+    if (!drivers.length) { el.innerHTML = '<div class="hint">servono almeno due giri</div>'; lapChart?.destroy(); lapChart = null; lapKey = ""; return; }
+    const n = Math.max(...drivers.map((d) => d.lap_positions.length));
+    const key = [n, prefs.follow, prefs.favs.join(","), drivers.map((d) => d.num).join(","), el.clientWidth].join("|");
+    if (key === lapKey) return;
+    lapKey = key; lapChart?.destroy(); el.innerHTML = "";
+    const hi = (d) => d.num === prefs.follow || isFav(d.num);
+    const xs = Array.from({ length: n }, (_, i) => i);
+    lapChart = new uPlot({
+      width: el.clientWidth || 600, height: 260, cursor: { show: false }, legend: { show: false },
+      scales: { x: { time: false }, y: { dir: -1, range: [0.5, state.drivers.length + 0.5] } },
+      axes: [{ stroke: "#8b93a1", grid: { stroke: "#23272e" }, label: "giro (0 = griglia)" }, { stroke: "#8b93a1", grid: { stroke: "#23272e" }, size: 34, splits: () => [1, 5, 10, 15, 20].filter((v) => v <= state.drivers.length) }],
+      series: [{}, ...drivers.map((d) => ({ stroke: hi(d) ? d.colour : d.colour + "40", width: d.num === prefs.follow ? 3 : hi(d) ? 2 : 1, spanGaps: true }))],
+    }, [xs, ...drivers.map((d) => xs.map((i) => d.lap_positions[i] ?? null))], el);
+  }
+
+  // ------------------------------------------------------------ campionato
+  let champKey = "";
+  function renderChamp() {
+    const c = state.championship || {}, key = JSON.stringify(c) + prefs.follow;
+    if (key === champKey) return;
+    champKey = key;
+    if (!c.drivers?.length) {
+      $("#champ-hint").textContent = "";
+      $("#champ-body").innerHTML = '<div class="hint">disponibile in gara: la F1 lo manda solo durante il Gran Premio</div>';
+      return;
+    }
+    $("#champ-hint").textContent = "punti e posizione se la gara finisse ora";
+    const arrow = (r) => r.pos && r.pred_pos && r.pred_pos !== r.pos
+      ? `<span class="${r.pred_pos < r.pos ? "up" : "down"}">${r.pred_pos < r.pos ? "▲" : "▼"}${Math.abs(r.pos - r.pred_pos)}</span>` : "";
+    const table = (title, rows, label) => `<div><table><thead><tr><th>#</th><th>${title}</th><th class="r">Ora</th><th class="r">Previsti</th></tr></thead><tbody>${rows.map((r) =>
+      `<tr class="${r.key === prefs.follow ? "follow" : ""}"><td>${r.pred_pos ?? "–"} ${arrow(r)}</td><td>${label(r)}</td><td class="r">${r.points ?? "–"}</td>`
+      + `<td class="r"><b>${r.pred_points ?? "–"}</b>${r.points != null && r.pred_points != null && r.pred_points !== r.points ? ` <span class="up">+${r.pred_points - r.points}</span>` : ""}</td></tr>`).join("")}</tbody></table></div>`;
+    $("#champ-body").innerHTML = `<div class="champ">${table("Pilota", c.drivers, (r) => byNum(r.key)
+      ? `<span class="drv"><i style="background:${colourOf(r.key)}"></i>${esc(tlaOf(r.key))}</span>`
+      : `<span class="hint" title="in classifica ma non in questa sessione">n° ${esc(r.key)}</span>`)}${table("Squadra", c.teams, (r) => esc(r.key))}</div>`;
   }
 
   // ------------------------------------------------------------ telemetria (uPlot)
@@ -398,6 +516,11 @@
   let chartKey = "";
   function renderTelemetry() {
     if ($("#telemetry").hidden || !isVisible($("#telemetry"))) return;
+    // in diretta la F1 manda la telemetria solo agli abbonati F1 TV: meglio dirlo che mostrare grafici vuoti
+    const none = !Object.keys(tel).length;
+    $("#tel-hint").hidden = !none;
+    $("#telemetry .charts").hidden = none;
+    if (none) return;
     const nums = selected(), key = nums.join(",");
     const els = { speed: $("#chart-speed"), pedals: $("#chart-pedals"), rpm: $("#chart-rpm"), gear: $("#chart-gear") };
     if (key !== chartKey) {
@@ -405,7 +528,8 @@
       for (const k of Object.keys(els)) { charts[k]?.destroy(); els[k].innerHTML = ""; }
       charts.speed = mkChart(els.speed, { series: buildSeries("speed", nums), scales: { x: { time: false }, y: { range: [0, 360] } } });
       charts.pedals = mkChart(els.pedals, { series: buildSeries("pedals", nums), scales: { x: { time: false }, y: { range: [0, 100] } } });
-      charts.rpm = mkChart(els.rpm, { height: 120, series: buildSeries("rpm", nums), scales: { x: { time: false }, y: { range: [0, 13000] } } });
+      charts.rpm = mkChart(els.rpm, { height: 120, series: buildSeries("rpm", nums), scales: { x: { time: false }, y: { range: [0, 13000] } },
+        axes: [{ stroke: "#8b93a1", grid: { stroke: "#23272e" } }, { stroke: "#8b93a1", grid: { stroke: "#23272e" }, size: 46, values: (u, vs) => vs.map((v) => v >= 1000 ? `${v / 1000}k` : v) }] });
       charts.gear = mkChart(els.gear, { height: 110, series: buildSeries("gear", nums), scales: { x: { time: false }, y: { range: [0, 8] } } });
     }
     if (!nums.length) return;
@@ -604,10 +728,17 @@
     document.body.dataset.tab = name;
     for (const p of document.querySelectorAll("main .panel")) p.classList.toggle("tab-active", p.id === name);
     for (const b of $("#tabbar").children) b.classList.toggle("on", b.dataset.tab === name);
-    chartKey = ""; gapKey = "";
-    if (state) { renderTelemetry(); renderGaps(); renderMap(); }
+    chartKey = ""; gapKey = ""; lapKey = "";
+    if (state) { renderTelemetry(); renderGaps(); renderMap(); renderPerf(); }
   }
   $("#tabbar").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) setTab(b.dataset.tab); });
+  $("#rc-filters").addEventListener("click", (e) => {
+    const b = e.target.closest("button"); if (!b) return;
+    prefs.rcFilter = b.dataset.f; save("rcFilter", prefs.rcFilter);
+    for (const x of $("#rc-filters").children) x.classList.toggle("on", x === b);
+    rcKey = ""; incKey = ""; if (state) renderRaceControl();
+  });
+  for (const x of $("#rc-filters").children) x.classList.toggle("on", x.dataset.f === prefs.rcFilter);
   // toccando la fascia si aprono tutti i messaggi
   $("#rc-ticker").addEventListener("click", () => {
     if (isMobile()) setTab("rc");
