@@ -217,16 +217,46 @@
     if (document.activeElement !== pl) pl.value = pitLossNormal();
     $("#pit-loss-hint").textContent = `${prefs.pitLoss != null ? "manuale" : o.source}${o.circuit ? " · " + o.circuit : ""} · SC ${o.sc} · VSC ${o.vsc}` + (o.observed_median ? ` · pit lane osservata ${o.observed_median} s` : "");
     const dl = $("#delay"); if (document.activeElement !== dl) dl.value = prefs.delay;
-    for (const cb of document.querySelectorAll("[data-panel]")) { const on = prefs.panels[cb.dataset.panel] ?? true; cb.checked = on; $("#" + cb.dataset.panel).hidden = !on; }
+    for (const cb of document.querySelectorAll("[data-panel]")) { cb.checked = prefs.panels[cb.dataset.panel] ?? true; $("#" + cb.dataset.panel).hidden = !panelOn(cb.dataset.panel); }
+    // telemetria in diretta solo con l'account F1 TV: senza, spariscono pannello e opzioni
+    const telOk = telAvailable();
+    $("#tel-toggle").hidden = !telOk; $("#opt-metrics").closest("label").hidden = !telOk;
+    document.body.classList.toggle("no-tel", !panelOn("telemetry"));
+    renderF1tv();
     $("#opt-metrics").checked = prefs.metrics; $("#opt-autoplay").checked = prefs.autoplay; $("#opt-chime").checked = prefs.chime;
     $("#opt-wall-all").checked = prefs.wallAll;
     $("#opt-mobile").value = prefs.mobile;
     // le schede seguono i pannelli scelti; se sparisce quella aperta si torna al tabellone
     for (const b of $("#tabbar").children) {
       if (b.dataset.tab === "board") continue;
-      b.hidden = (prefs.panels[b.dataset.tab] ?? true) === false;
+      b.hidden = !panelOn(b.dataset.tab);
     }
-    if (prefs.tab !== "board" && (prefs.panels[prefs.tab] ?? true) === false) setTab("board");
+    if (prefs.tab !== "board" && !panelOn(prefs.tab)) setTab("board");
+  }
+
+  // c'è telemetria da mostrare: nel replay sempre, in diretta solo con l'account F1 TV
+  function telAvailable() { return Object.keys(tel).length > 0 || !!state?.f1tv?.connected; }
+  function panelOn(id) { return (prefs.panels[id] ?? true) && (id !== "telemetry" || telAvailable()); }
+
+  function renderF1tv() {
+    const box = $("#f1tv"), a = state.f1tv || {};
+    box.hidden = !state.live;
+    if (box.hidden) return;
+    const exp = a.expires ? new Date(a.expires * 1000).toLocaleDateString("it-IT", { day: "numeric", month: "short" }) : "";
+    $("#f1tv-status").textContent = a.connected ? `· collegato${a.product ? " (" + a.product + ")" : ""}${exp ? ", scade il " + exp : ""}` : a.problem ? "· " + a.problem : "· non collegato";
+    $("#f1tv-remove").hidden = !a.connected;
+  }
+  async function f1tvRequest(method, body) {
+    const msg = $("#f1tv-msg");
+    msg.textContent = method === "DELETE" ? "Scollego…" : "Collego…";
+    try {
+      const r = await fetch("/api/f1tv", { method, headers: { "Content-Type": "application/json" }, body: body && JSON.stringify(body) });
+      if (!r.ok) { msg.textContent = await r.text(); return; }
+      state.f1tv = await r.json();
+      $("#f1tv-token").value = "";
+      msg.textContent = method === "DELETE" ? "Account scollegato." : "Collegato: mi ricollego al feed, la telemetria arriva in pochi secondi.";
+      render();
+    } catch (e) { msg.textContent = "Il muretto non risponde: è acceso?"; }
   }
 
   function defaultTelDriver(slot) {
@@ -953,7 +983,7 @@
   let chartKey = "";
   function renderTelemetry() {
     if ($("#telemetry").hidden || !isVisible($("#telemetry"))) return;
-    // in diretta la F1 manda la telemetria solo agli abbonati F1 TV: meglio dirlo che mostrare grafici vuoti
+    // account collegato ma ancora nessun dato (macchine ai box): meglio dirlo che mostrare grafici vuoti
     const none = !Object.keys(tel).length;
     $("#tel-hint").hidden = !none;
     $("#telemetry .charts").hidden = none;
@@ -1172,6 +1202,9 @@
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden && prefs.alerts && audio) keepAwake().then((h) => { awakeHow = h; alertsUi(); });
   });
+  $("#f1tv-save").addEventListener("click", () => { const v = $("#f1tv-token").value.trim(); if (v) f1tvRequest("POST", { token: v }); });
+  $("#f1tv-token").addEventListener("keydown", (e) => { if (e.key === "Enter") $("#f1tv-save").click(); });
+  $("#f1tv-remove").addEventListener("click", () => f1tvRequest("DELETE"));
   document.querySelectorAll("[data-panel]").forEach((cb) => cb.addEventListener("change", () => { prefs.panels[cb.dataset.panel] = cb.checked; save("panels", prefs.panels); chartKey = ""; if (state) render(); }));
   $("#opt-metrics").addEventListener("change", (e) => { prefs.metrics = e.target.checked; save("metrics", prefs.metrics); if (state) render(); });
   $("#opt-autoplay").addEventListener("change", (e) => { prefs.autoplay = e.target.checked; save("autoplay", prefs.autoplay); });

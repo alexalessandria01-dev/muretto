@@ -105,9 +105,21 @@ class LiveFeed:
     arrivano. Riconnette da solo con backoff se la connessione cade.
     """
 
-    def __init__(self, topics: Iterable[str] = TOPICS):
+    def __init__(self, topics: Iterable[str] = TOPICS, auth_token: str | None = None):
         self.topics = list(topics)
         self.base = f"{LIVE_HOST}/signalrcore"
+        self.auth_token = auth_token  # token F1 TV: con questo arrivano anche telemetria e GPS
+        self.auth_rejected = False  # la F1 ha rifiutato il token salvato
+        self._ws: aiohttp.ClientWebSocketResponse | None = None
+
+    def set_auth_token(self, token: str | None) -> None:
+        """Cambia account e si ricollega subito, così la Subscribe riparte con il token nuovo."""
+        self.auth_token, self.auth_rejected = token, False
+        if self._ws is not None and not self._ws.closed:
+            asyncio.ensure_future(self._ws.close())
+
+    def _auth_headers(self) -> dict:
+        return {"Authorization": f"Bearer {self.auth_token}"} if self.auth_token else {}
 
     async def _negotiate(self, session: aiohttp.ClientSession) -> tuple[str, str]:
         cookie = ""
@@ -115,19 +127,32 @@ class LiveFeed:
             c = r.cookies.get("AWSALBCORS")
             if c:
                 cookie = f"AWSALBCORS={c.value}"
-        async with session.post(f"https://{self.base}/negotiate?negotiateVersion=1", headers={"Cookie": cookie}) as r:
+        async with session.post(f"https://{self.base}/negotiate?negotiateVersion=1",
+                                headers={"Cookie": cookie, **self._auth_headers()}) as r:
             r.raise_for_status()
             neg = await r.json()
         return neg["connectionToken"], cookie
 
     async def _run_once(self) -> AsyncIterator[tuple[str, object, float]]:
         async with aiohttp.ClientSession() as session:
-            token, cookie = await self._negotiate(session)
-            headers = {"User-Agent": "BestHTTP", "Accept-Encoding": "gzip,identity", "Cookie": cookie}
+            try:
+                token, cookie = await self._negotiate(session)
+            except aiohttp.ClientResponseError as e:
+                if not self.auth_token or e.status not in (401, 403):
+                    raise
+                # token rifiutato: meglio la diretta senza telemetria che nessuna diretta
+                log.warning("token F1 TV rifiutato (%s): continuo senza account", e.status)
+                self.auth_token, self.auth_rejected = None, True
+                token, cookie = await self._negotiate(session)
+            headers = {"User-Agent": "BestHTTP", "Accept-Encoding": "gzip,identity", "Cookie": cookie, **self._auth_headers()}
+            url = f"wss://{self.base}?id={token}"
+            if self.auth_token:  # SignalR Core accetta il token sia nell'header sia qui
+                url += "&access_token=" + self.auth_token
             # receive_timeout: la F1 manda un ping ogni ~16 s; se per 45 s non arriva niente il collegamento
             # è appeso a metà e senza limite non ci si riconnetterebbe mai più
-            async with session.ws_connect(f"wss://{self.base}?id={token}", headers=headers, heartbeat=None,
-                                          receive_timeout=45) as ws:
+            async with session.ws_connect(url, headers=headers, heartbeat=None, receive_timeout=45) as ws:
+                self._ws = ws
+                log.info("account F1 TV: %s", "sì" if self.auth_token else "no (niente telemetria in diretta)")
                 await ws.send_str(json.dumps({"protocol": "json", "version": 1}) + RECORD_SEP)
                 hs = await ws.receive()
                 if hs.type != aiohttp.WSMsgType.TEXT or json.loads(hs.data.rstrip(RECORD_SEP) or "{}").get("error"):

@@ -20,8 +20,8 @@ from aiohttp import WSMsgType, web
 import re
 from dataclasses import asdict
 
-from . import calibration, compare, radio
-from .feed import STATIC_BASE, ArchiveFeed, cache_dir, download_session, season_index
+from . import calibration, compare, f1tv, radio
+from .feed import STATIC_BASE, ArchiveFeed, LiveFeed, cache_dir, download_session, season_index
 from .state import Lap, RaceState
 
 log = logging.getLogger(__name__)
@@ -134,7 +134,7 @@ class Hub:
             try:
                 car, pos = self.state.drain_telemetry()
                 now = loop.time()
-                self.history.append((now, json.dumps({"type": "state", **self.state.snapshot()}), car, pos))
+                self.history.append((now, json.dumps({"type": "state", **self.snapshot()}), car, pos))
             except Exception:  # noqa: BLE001
                 log.exception("snapshot non riuscito, riprovo al prossimo giro")
                 continue
@@ -226,7 +226,7 @@ class Hub:
             await ws.send_str(json.dumps({"type": "car_history", "drivers": history}))
             await ws.send_str(json.dumps({"type": "pos", "samples": [{"n": n, **p} for n, p in self.state.positions.items()]}))
             if delay == 0 or not self.history:
-                await ws.send_str(json.dumps({"type": "state", **self.state.snapshot()}))
+                await ws.send_str(json.dumps({"type": "state", **self.snapshot()}))
                 c["sent_state"] = loop.time()
             else:
                 await self._push(ws, c, loop.time())
@@ -252,8 +252,43 @@ class Hub:
             except (TypeError, ValueError):
                 pass
 
+    def snapshot(self) -> dict:
+        """Lo stato della gara più quello che la pagina deve sapere del collegamento."""
+        live = isinstance(self.feed, LiveFeed)
+        return {**self.state.snapshot(), "live": live,
+                "f1tv": self._f1tv_info() if live else {"connected": False}}
+
+    def _f1tv_info(self) -> dict:
+        if self.feed.auth_rejected:
+            return {"connected": False, "problem": "la F1 ha rifiutato il token: rifai il login e incollane uno nuovo"}
+        return f1tv.info(self.feed.auth_token)
+
+    # ------------------------------------------------------------ account F1 TV
+    async def api_f1tv(self, request: web.Request):
+        """GET: stato dell'account. POST {"token": ...}: collega. DELETE: scollega.
+        Il token non torna mai indietro alla pagina."""
+        if not isinstance(self.feed, LiveFeed):
+            raise web.HTTPConflict(text="l'account F1 TV serve solo in diretta")
+        if request.method == "POST":
+            try:
+                raw = (await request.json()).get("token", "")
+            except ValueError:
+                raw = ""
+            token = f1tv.parse_token(raw)
+            if not token:
+                raise web.HTTPBadRequest(text="non è un token F1 TV: copia il valore del cookie login-session")
+            status = f1tv.info(token)
+            if not status["connected"]:
+                raise web.HTTPBadRequest(text=status["problem"])
+            f1tv.save(token)
+            self.feed.set_auth_token(token)
+        elif request.method == "DELETE":
+            f1tv.save(None)
+            self.feed.set_auth_token(None)
+        return web.json_response(self._f1tv_info())
+
     async def api_state(self, _request):
-        return web.json_response(self.state.snapshot())
+        return web.json_response(self.snapshot())
 
     # ------------------------------------------------------------ confronto giri (archivio)
     _SESSION_PATH = re.compile(r"^\d{4}/[\w-]+/[\w-]+/?$")
@@ -347,6 +382,8 @@ def make_app(feed) -> web.Application:
     app.router.add_get("/api/laps", hub.api_laps)
     app.router.add_get("/api/compare", hub.api_compare)
     app.router.add_get("/audio", hub.audio)
+    for method in ("GET", "POST", "DELETE"):
+        app.router.add_route(method, "/api/f1tv", hub.api_f1tv)
     app.router.add_static("/web", WEB_DIR)
 
     async def start_tasks(app):

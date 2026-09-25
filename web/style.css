@@ -115,6 +115,10 @@ main {
 #champ { grid-area: champ; }
 #cmp { grid-area: cmp; }
 .panel[hidden] { display: none !important; }
+/* senza telemetria (diretta senza account F1 TV) la mappa sale accanto ai radio invece di restare sola */
+@media (min-width: 1101px) {
+  body.no-tel main { grid-template-areas: "board side" "radio map" "rc champ" "perf perf" "cmp cmp"; }
+}
 @media (max-width: 1100px) {
   main { grid-template-columns: 1fr; grid-template-areas: "board" "side" "tel" "map" "radio" "rc" "perf" "champ" "cmp"; }
 }
@@ -598,3 +602,11 @@ body.m.race td.col-gap .i .drs1 { display: block; font-style: normal; font-size:
 #tabbar button[data-dot]:not([data-dot=""])::after { content: attr(data-dot); position: absolute; top: 3px; right: 3px;
   min-width: 16px; height: 16px; padding: 0 4px; border-radius: 999px; background: var(--accent); color: #fff;
   font-size: 9px; font-weight: 800; line-height: 16px; text-align: center; letter-spacing: 0; }
+
+/* ---------- account F1 TV (nelle impostazioni) */
+#f1tv { flex-basis: 100%; }
+#f1tv summary { cursor: pointer; }
+#f1tv .f1tv-body { max-width: 560px; padding: 6px 0 2px; }
+#f1tv ol { margin: 6px 0; padding-left: 18px; }
+#f1tv .f1tv-row { display: flex; gap: 6px; flex-wrap: wrap; }
+#f1tv input { flex: 1 1 220px; min-width: 0; }

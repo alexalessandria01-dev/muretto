@@ -18,6 +18,7 @@ import shutil
 import subprocess
 import sys
 
+from . import f1tv
 from .feed import ArchiveFeed, LiveFeed, download_session, season_index, ts_to_seconds
 from .server import serve
 
@@ -60,7 +61,12 @@ def cmd_live(args):
     if shutil.which("caffeinate"):
         subprocess.Popen(["caffeinate", "-i", "-w", str(os.getpid())])
         logging.getLogger(__name__).info("Mac tenuto sveglio finché gira il live (caffeinate)")
-    serve(LiveFeed(), port=args.port)
+    token = f1tv.load()
+    status = f1tv.info(token)
+    if token and not status["connected"]:
+        logging.getLogger(__name__).warning("account F1 TV non usato: %s", status["problem"])
+        token = None
+    serve(LiveFeed(auth_token=token), port=args.port)
 
 
 def main(argv=None):

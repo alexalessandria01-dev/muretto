@@ -65,7 +65,7 @@
   <label><input type="checkbox" data-panel="battle" checked> Battaglia</label>
   <label><input type="checkbox" data-panel="wall" checked> Muretto</label>
   <label><input type="checkbox" data-panel="gaps" checked> Gap</label>
-  <label><input type="checkbox" data-panel="telemetry" checked> Telemetria</label>
+  <label id="tel-toggle"><input type="checkbox" data-panel="telemetry" checked> Telemetria</label>
   <label><input type="checkbox" data-panel="map" checked> Mappa</label>
   <label><input type="checkbox" data-panel="radio" checked> Radio</label>
   <label><input type="checkbox" data-panel="rc" checked> Direzione gara</label>
@@ -84,6 +84,24 @@
     </select>
   </label>
   <span class="hint">★ clicca un pilota in tabella per i preferiti</span>
+  <details id="f1tv" hidden>
+    <summary>Account F1 TV <span id="f1tv-status" class="hint"></span></summary>
+    <div class="f1tv-body">
+      <p class="hint">Facoltativo. Con un abbonamento F1 TV Access, Pro o Premium in diretta arrivano anche la telemetria e il GPS vero delle macchine; senza, la telemetria resta nascosta e la mappa è stimata.</p>
+      <ol class="hint">
+        <li>Su Chrome entra con il tuo account su <b>formula1.com</b></li>
+        <li>Premi F12 → Application → Cookies → https://www.formula1.com</li>
+        <li>Copia il valore di <b>login-session</b> e incollalo qui sotto</li>
+      </ol>
+      <div class="f1tv-row">
+        <input id="f1tv-token" type="password" autocomplete="off" placeholder="valore del cookie login-session">
+        <button id="f1tv-save" type="button">Collega</button>
+        <button id="f1tv-remove" type="button" hidden>Scollega</button>
+      </div>
+      <p class="hint" id="f1tv-msg"></p>
+      <p class="hint">Il token resta su questo Mac e dura qualche giorno: quando scade basta rifare questi passi.</p>
+    </div>
+  </details>
 </nav>
 
 <!-- Scheda del pilota seguito: solo su telefono, sempre visibile sopra le schede. -->
@@ -130,7 +148,7 @@
       <label>3 <select class="tel-driver" data-slot="2"></select></label>
       <span class="hint">ultimi 60 s · pieno = gas, tratteggio = freno</span>
     </div>
-    <div class="hint big-hint" id="tel-hint" hidden>In diretta la F1 manda la telemetria (velocità, gas, freno, marce, giri motore) solo a chi è abbonato a F1 TV, quindi qui non arriva. Nel replay di una sessione finita c'è tutta.</div>
+    <div class="hint big-hint" id="tel-hint" hidden>Account F1 TV collegato: la telemetria compare appena le macchine sono in pista.</div>
     <div class="charts">
       <div id="chart-speed"></div>
       <div id="chart-pedals"></div>
