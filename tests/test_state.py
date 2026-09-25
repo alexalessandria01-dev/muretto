@@ -81,3 +81,30 @@ def test_new_session_info_resets_state():
     st.apply("SessionInfo", {"Name": "Race", "Path": "b/", "Meeting": {"Name": "X"}}, 0)
     assert st.data.get("TimingData") is None
     assert st.data["SessionInfo"]["Path"] == "b/"
+
+
+def test_merge_honours_deleted():
+    from muretto.state import merge
+    base = {"PitTimes": {"23": {"Duration": "1846.2"}, "1": {"Duration": "24.5"}}}
+    merge(base, {"PitTimes": {"_deleted": ["23"]}})
+    assert base == {"PitTimes": {"1": {"Duration": "24.5"}}}
+
+
+def test_pit_lane_passes_survive_deletion_and_skip_red_flag():
+    from muretto.state import RaceState
+    st = RaceState()
+    st.apply("PitLaneTimeCollection", {"PitTimes": {"1": {"RacingNumber": "1", "Duration": "1840.7", "Lap": "3"}}}, 10.0)
+    st.apply("PitLaneTimeCollection", {"PitTimes": {"_deleted": ["1"]}}, 20.0)
+    st.apply("PitLaneTimeCollection", {"PitTimes": {"1": {"RacingNumber": "1", "Duration": "24.9", "Lap": "28"}}}, 30.0)
+    st.apply("PitLaneTimeCollection", {"PitTimes": {"_deleted": ["1"]}}, 40.0)
+    assert st.pit_times() == {"1": {"duration": "24.9", "lap": "28"}}  # la sosta vera, non la rossa
+    assert sorted(st.observed_pit_losses()) == [24.9, 1840.7]  # pit_loss_for poi scarta la rossa
+
+
+def test_snapshot_applies_session_info_first():
+    from muretto.state import RaceState
+    st = RaceState()
+    st.apply("SessionInfo", {"Path": "2026/a/fp1/"}, 0.0)
+    # sessione nuova: SessionInfo arriva dopo i piloti nel dizionario, ma va applicata prima
+    st.apply("__snapshot__", {"DriverList": {"1": {"Tla": "NOR"}}, "SessionInfo": {"Path": "2026/a/fp2/"}}, 1.0)
+    assert "1" in st.data.get("DriverList", {})

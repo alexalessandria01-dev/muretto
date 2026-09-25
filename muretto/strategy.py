@@ -25,11 +25,17 @@ DEFAULT_PIT_LOSS = 22.0
 
 
 def gap_seconds(text: str | None) -> float | None:
-    """``"+12.345"`` → 12.345; leader (``"LAP 12"``/vuoto) → 0; doppiato (``"1L"``) → None."""
+    """``"+12.345"`` → 12.345; leader (``"LAP 12"``) → 0; doppiato (``"1L"``) o vuoto → None.
+
+    Vuoto NON vuol dire leader: la F1 lo manda vuoto anche per chi è secondo (a Monza al giro 22
+    Russell risultava primo e la sosta lo dava fuori P10). Il leader lo sceglie chi chiama, dalla
+    posizione."""
     if text is None:
-        return 0.0
+        return None
     t = text.strip()
-    if not t or t.startswith("LAP"):
+    if not t:
+        return None
+    if t.startswith("LAP"):
         return 0.0
     if t.endswith("L") or "LAP" in t:
         return None

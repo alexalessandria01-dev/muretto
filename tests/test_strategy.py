@@ -11,7 +11,8 @@ from muretto.strategy import (
 def test_gap_seconds_parses_formats():
     assert gap_seconds("+12.345") == 12.345
     assert gap_seconds("LAP 12") == 0.0
-    assert gap_seconds("") == 0.0
+    assert gap_seconds("") is None  # vuoto: nessun dato, non "leader"
+    assert gap_seconds(None) is None
     assert gap_seconds("1L") is None
     assert gap_seconds("+1 LAP") is None
 

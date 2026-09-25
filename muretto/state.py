@@ -25,6 +25,13 @@ def merge(base, delta):
     for k, v in delta.items():
         if k == "_kf":
             continue
+        if k == "_deleted":
+            # la F1 toglie voci così: {"PitTimes": {"_deleted": ["23"]}}. Ignorarlo lasciava in scheda
+            # per sempre i "30:46 min" di pit lane della bandiera rossa di Monza
+            for key in v if isinstance(v, list) else [v]:
+                if isinstance(base, dict):
+                    base.pop(str(key), None)
+            continue
         cur = base.get(k)
         if isinstance(v, dict) and isinstance(cur, dict):
             merge(cur, v)
@@ -81,13 +88,16 @@ class RaceState:
         self.circuit_info: dict = {}  # da MultiViewer: pit_loss {normal, sc, vsc}, tracciato, curve
         self.last_ts: float = 0.0     # istante dell'ultimo messaggio, nel tempo del feed
         self._clock_at: float | None = None  # quando è arrivato l'ultimo ExtrapolatedClock
+        self._pit_lane: dict[str, list[dict]] = defaultdict(list)  # passaggi in pit lane, anche quelli già cancellati dalla F1
 
     # ------------------------------------------------------------------ ingresso
 
     def apply(self, topic: str, data, ts: float):
         self.last_ts = ts
         if topic == "__snapshot__":
-            for t, d in data.items():
+            # SessionInfo per primo: se cambia sessione azzera lo stato, e non deve cancellare
+            # quello che è appena arrivato nello stesso snapshot
+            for t, d in sorted(data.items(), key=lambda kv: kv[0] != "SessionInfo"):
                 self.apply(t, d, ts)
             return
         if topic == "ExtrapolatedClock":
@@ -107,6 +117,8 @@ class RaceState:
             self._status_log.append((ts, str(data["Status"])))
         if topic == "TimingData":
             self._track_laps(data, ts)
+        if topic == "PitLaneTimeCollection":
+            self._record_pit_lane(data)
         if isinstance(data, dict):
             merge(self.data.setdefault(topic, {}), data)
         else:
@@ -155,8 +167,11 @@ class RaceState:
                 position = int(d.get("Position") or cur_line.get("Position") or 0) or None
             except ValueError:
                 position = None
+            gap_s = strategy.gap_seconds(gap_txt)
+            if gap_s is None and position == 1:
+                gap_s = 0.0
             self.laps[num].append(Lap(lap=n, seconds=secs, track_status=status, clean=clean, pit=pit, ts=ts,
-                                      gap_s=strategy.gap_seconds(gap_txt), position=position))
+                                      gap_s=gap_s, position=position))
             self._pit_flag[num] = False
             self._lap_start[num] = ts
 
@@ -213,14 +228,8 @@ class RaceState:
         return [(l.lap, l.seconds, l.clean) for l in hist[start:] if l.seconds]
 
     def observed_pit_losses(self) -> list[float]:
-        plc = self.data.get("PitLaneTimeCollection", {}).get("PitTimes") or {}
-        out = []
-        for v in plc.values():
-            if isinstance(v, dict):
-                secs = strategy.lap_time_seconds(str(v.get("Duration", "")))
-                if secs:
-                    out.append(secs)
-        return out
+        """Tutti i passaggi in pit lane visti nella sessione (la F1 li cancella poco dopo)."""
+        return [p["seconds"] for passes in self._pit_lane.values() for p in passes]
 
     @staticmethod
     def _hms_to_s(v) -> float | None:
@@ -248,13 +257,25 @@ class RaceState:
         return self._s_to_hms(base - (self.last_ts - self._clock_at))
 
     def pit_times(self) -> dict[str, dict]:
-        """Tempo passato in pit lane, per pilota: quello vero della sessione, non la stima."""
-        plc = self.data.get("PitLaneTimeCollection", {}).get("PitTimes") or {}
+        """Ultimo passaggio in pit lane per pilota: quello vero della sessione, non la stima.
+        Esclusi quelli da bandiera rossa (ore ferme in pit lane, non un pit stop)."""
         out = {}
-        for num, v in plc.items():
-            if isinstance(v, dict) and v.get("Duration"):
-                out[str(num)] = {"duration": v.get("Duration", ""), "lap": v.get("Lap")}
+        for num, passes in self._pit_lane.items():
+            real = [p for p in passes if p["seconds"] < 120]
+            if real:
+                out[num] = {"duration": real[-1]["duration"], "lap": real[-1]["lap"]}
         return out
+
+    def _record_pit_lane(self, data):
+        """PitLaneTimeCollection: la F1 manda ogni passaggio e lo cancella poco dopo (_deleted).
+        Si tiene qui, altrimenti a metà gara non resterebbe niente da mostrare."""
+        for num, v in ((data or {}).get("PitTimes") or {}).items():
+            if num == "_deleted" or not isinstance(v, dict) or not v.get("Duration"):
+                continue
+            secs = strategy.lap_time_seconds(str(v["Duration"]))
+            passes = self._pit_lane[str(num)]
+            if secs and not any(p["lap"] == v.get("Lap") and p["duration"] == v["Duration"] for p in passes):
+                passes.append({"duration": v["Duration"], "lap": v.get("Lap"), "seconds": secs})
 
     @staticmethod
     def _items(v) -> list:
@@ -411,7 +432,7 @@ class RaceState:
                 "colour": "#" + drv.get("TeamColour", "888888"),
                 "pos": pos,
                 "gap": gap_txt or "",
-                "gap_s": strategy.gap_seconds(line.get("GapToLeader")),
+                "gap_s": 0.0 if pos == 1 and not line.get("GapToLeader") else strategy.gap_seconds(line.get("GapToLeader")),
                 "interval": int_txt or "",
                 "catching": bool((line.get("IntervalToPositionAhead") or {}).get("Catching")),
                 "last": last.get("Value", ""),
@@ -511,6 +532,7 @@ class RaceState:
             "drivers": rows,
             "radio": radio[-40:],
             "race_control": rc,
+            "race_control_total": len([m for m in rc_all if isinstance(m, dict)]),
             "incidents": steward["incidents"][-30:],
             "championship": self.championship(),
         }

@@ -53,8 +53,8 @@
   const colourOf = (n) => byNum(n)?.colour || "#888";
   const TRACK_LABEL = { green: "VERDE", yellow: "GIALLA", sc: "SAFETY CAR", vsc: "VSC", vsc_ending: "VSC FINISCE", red: "ROSSA" };
   const isRace = () => state?.session.type === "Race";
-  /** L'avviso "una sola mescola" serve da un terzo di gara in poi: al via ce l'hanno tutti. */
-  const mixDue = () => isRace() && state.session.lap && state.session.total_laps && state.session.lap >= state.session.total_laps / 3;
+  /** L'avviso "una sola mescola" serve da un terzo di gara in poi (al via ce l'hanno tutti), e mai nella Sprint. */
+  const mixDue = () => isRace() && state.session.name !== "Sprint" && state.session.lap && state.session.total_laps && state.session.lap >= state.session.total_laps / 3;
   const drsState = (v) => (v == null ? "" : v > 9 ? "on" : v === 8 ? "possible" : "off");
   /** Modalità telefono. Alcuni telefoni (es. col "sito desktop" attivo) dichiarano una
    *  larghezza da computer: per questo si può forzare a mano dalle impostazioni. */
@@ -361,9 +361,12 @@
   }
 
   // ------------------------------------------------------------ radio (incrementale, mai ricostruita)
-  const radioSeen = new Set(); let radioReady = false;
+  const radioSeen = new Set(); let radioReady = false, radioPath = null;
   function renderRadio() {
     const ul = $("#radio-list");
+    if (state.session.path !== radioPath) {  // sessione nuova: via le radio vecchie, niente autoplay a raffica
+      radioPath = state.session.path; radioSeen.clear(); ul.innerHTML = ""; radioReady = false;
+    }
     $("#radio-count").textContent = state.radio.length ? `${state.radio.length} messaggi` : "";
     const fresh = state.radio.filter((r) => !radioSeen.has(r.path));
     for (const r of fresh) {
@@ -422,11 +425,14 @@
     const list = [...state.race_control].reverse();
     renderRcTicker(list);
     renderIncidents();
-    if (list.length !== rcCount) {
-      if (chimeReady && prefs.chime && list.length > rcCount) chime();
-      rcCount = list.length; chimeReady = true;
+    // il server manda solo gli ultimi 60 messaggi: la lunghezza della lista smette di crescere
+    // (a Monza già al giro 4), quindi si guarda il totale
+    const total = state.race_control_total ?? list.length;
+    if (total !== rcCount) {
+      if (chimeReady && prefs.chime && total > rcCount) chime();
+      rcCount = total; chimeReady = true;
     }
-    const key = `${prefs.rcFilter}:${list.length}`;
+    const key = `${prefs.rcFilter}:${total}`;
     if (key === rcKey) return;
     rcKey = key;
     $("#rc-list").innerHTML = list.filter(RC_FILTERS[prefs.rcFilter] || RC_FILTERS.all)
