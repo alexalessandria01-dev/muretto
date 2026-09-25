@@ -136,7 +136,10 @@ class Hub:
             await ws.send_str(json.dumps({"type": "pos", "samples": pos}))
 
     async def ws_handler(self, request: web.Request):
-        ws = web.WebSocketResponse(heartbeat=20, max_msg_size=0)
+        # compressione del WebSocket (permessage-deflate, la negoziano da soli i browser): a fine gara
+        # lo stato pesa ~110 KB due volte al secondo, compresso ~20 KB. Per un telefono per due ore
+        # sono 1,6 GB contro 0,3
+        ws = web.WebSocketResponse(heartbeat=20, max_msg_size=0, compress=True)
         await ws.prepare(request)
         try:
             delay = max(0.0, min(HISTORY - 1, float(request.query.get("delay", 0) or 0)))

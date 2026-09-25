@@ -770,7 +770,10 @@
         + (src ? `posizioni stimate dai minisettori, calibrate su ${src}` : "posizioni stimate a grandi linee dai minisettori")
         + ": in diretta la F1 non manda il GPS";
     }
-    for (const d of state.drivers) {
+    // sigle: prima seguito e preferiti, poi le altre solo dove non si sovrappongono
+    const labels = [];
+    const order = [...state.drivers].sort((a, b) => (b.num === prefs.follow) - (a.num === prefs.follow) || isFav(b.num) - isFav(a.num));
+    for (const d of order) {
       let raw;
       if (gps) {
         const p = lastPos[d.num]; if (!p || d.retired || p.status !== "OnTrack") continue;
@@ -783,7 +786,10 @@
       ctx.beginPath(); ctx.arc(x, y, hi ? 8 : fav ? 6.5 : 5, 0, Math.PI * 2); ctx.fillStyle = d.colour;
       ctx.globalAlpha = estimate ? 0.85 : 1; ctx.fill(); ctx.globalAlpha = 1;
       if (hi || fav) { ctx.strokeStyle = hi ? "#fff" : "#3b82f6"; ctx.lineWidth = 2; ctx.stroke(); }
-      ctx.fillStyle = "#e8eaed"; ctx.font = `${hi ? "bold 12px" : "11px"} monospace`; ctx.fillText(d.tla, x + 9, y + 4);
+      if (hi || fav || labels.every(([lx, ly]) => Math.abs(lx - x) > 30 || Math.abs(ly - y) > 13)) {
+        ctx.fillStyle = "#e8eaed"; ctx.font = `${hi ? "bold 12px" : "11px"} monospace`; ctx.fillText(d.tla, x + 9, y + 4);
+        labels.push([x, y]);
+      }
     }
   }
 

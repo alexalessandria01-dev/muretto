@@ -91,3 +91,20 @@ def test_theoretical_best_sums_best_sectors():
 def test_theoretical_best_needs_all_three_sectors():
     from muretto.strategy import theoretical_best
     assert theoretical_best(["27.225", "", "27.593"], "1:23.504") is None
+
+
+def test_fill_lapped_gaps_sums_intervals():
+    from muretto.strategy import fill_lapped_gaps
+    rows = [{"gap_s": 0.0, "interval": ""}, {"gap_s": 78.958, "interval": "+3.349"},
+            {"gap_s": None, "interval": "+14.791"}, {"gap_s": None, "interval": "+13.677"},
+            {"gap_s": None, "interval": "1L"}]  # l'ultimo è doppiato anche rispetto a chi ha davanti
+    fill_lapped_gaps(rows)
+    assert rows[2]["gap_s"] == 93.749 and rows[3]["gap_s"] == 107.426
+    assert rows[4]["gap_s"] is None
+
+
+def test_fill_lapped_gaps_skips_retired():
+    from muretto.strategy import fill_lapped_gaps
+    rows = [{"gap_s": 0.0, "interval": ""}, {"gap_s": None, "interval": "+5.0", "retired": True}]
+    fill_lapped_gaps(rows)
+    assert rows[1]["gap_s"] is None

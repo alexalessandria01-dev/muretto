@@ -447,6 +447,8 @@ class RaceState:
                 "lap_positions": self._lap_positions(lap_series.get(num)),
             })
         rows.sort(key=lambda r: r["pos"])
+        if session_type == "Race":
+            strategy.fill_lapped_gaps(rows)  # i doppiati hanno "1 L": il distacco si ricava dagli intervalli
 
         # strategia per tutti (il browser sceglie il team a fuoco)
         field = [(r["num"], None if r["retired"] or r["stopped"] else r["gap_s"]) for r in rows]

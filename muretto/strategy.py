@@ -147,3 +147,19 @@ def theoretical_best(best_sectors: list[str], best_lap: str | None) -> dict | No
     best = lap_time_seconds(best_lap)
     return {"time": format_lap(theo), "seconds": theo,
             "margin": round(best - theo, 3) if best is not None else None}
+
+
+def fill_lapped_gaps(rows: list[dict]) -> None:
+    """Distacco dal leader in secondi anche per i doppiati.
+
+    La F1 scrive "1 L" come distacco di un doppiato, ma l'intervallo da chi gli sta
+    davanti resta in secondi: sommandoli lungo la classifica (``rows`` in ordine di
+    posizione) si ricava il distacco vero, e con esso la finestra dei box."""
+    prev = None
+    for r in rows:
+        if r.get("gap_s") is None and prev is not None and prev.get("gap_s") is not None \
+                and not r.get("retired") and not r.get("stopped"):
+            iv = gap_seconds(r.get("interval"))
+            if iv:
+                r["gap_s"] = round(prev["gap_s"] + iv, 3)
+        prev = r
