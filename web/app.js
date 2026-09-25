@@ -330,7 +330,7 @@
         <td class="r col-best">${esc(d.best)}</td>
         <td class="col-sectors"><span class="sectors">${sectors}</span></td>
         <td class="col-tyre"><span class="tyre"><b class="${d.compound}"></b>${d.age}${d.new ? "" : '<span class="used">usata</span>'}</span></td>
-        <td class="r col-stops">${stopsTxt(d)}</td>
+        <td class="r col-stops" title="${stopsTxt(d)}">${d.stops}${d.free_stops ? `<span class="free-stops">${d.free_stops}R</span>` : ""}</td>
         <td class="col-stints"><span class="stints">${stints}</span></td>
         <td class="metrics">${carCell(d)}</td>
       </tr>`;
