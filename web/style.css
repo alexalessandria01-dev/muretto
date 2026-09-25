@@ -303,7 +303,9 @@ body.show-metrics .metrics { display: table-cell; }
 .panel-head.sub { margin-top: 6px; }
 
 /* ---------- campionato */
-.champ { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; }
+.champ { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }  /* una sotto l'altra: affiancate uscivano dalla colonna */
+.champ table { width: 100%; }
+.champ td { white-space: normal; }  /* nomi squadra lunghi ("Red Bull Racing Red Bull Ford") vanno a capo */
 .champ table td, .champ table th { padding: 4px 6px; }
 .champ .up { color: var(--green); } .champ .down { color: var(--red); }
 
@@ -547,3 +549,22 @@ body[data-flag="red"] { --flag-c: rgba(255, 69, 58, .8); }
   body[data-flag]::after { animation: none; opacity: 1; }
   .pill.sc, .pill.vsc, .pill.vsc_ending, .pill.red { animation: none; }
 }
+
+/* ---------- telefono: intestazione compatta, intervallo in grande, pallini sulle schede */
+.wx-toggle { display: none; }
+.col-gap .i { display: none; }
+body.m .stat.wx { display: none; }
+body.m.wx-open .stat.wx { display: flex; }
+body.m .wx-toggle { display: flex; cursor: pointer; font: inherit; color: inherit; }
+body.m .wx-toggle .k::after { content: " ▾"; }
+body.m.wx-open .wx-toggle .k::after { content: " ▴"; }
+/* in gara la cosa da guardare è chi ha davanti: intervallo grande, gap dal leader piccolo sotto */
+body.m.race td.col-gap { display: flex !important; flex-direction: column; align-items: flex-end; line-height: 1.15; }
+body.m.race td.col-gap .i { display: block; font-size: 16px; font-weight: 700; }
+body.m.race td.col-gap .i.catching { color: var(--green); }
+body.m.race td.col-gap .g { font-size: 10px; color: var(--muted); font-weight: 500; order: 2; }
+body.m.race td.col-gap .i .drs1 { display: block; font-style: normal; font-size: 9px; font-weight: 700; letter-spacing: .06em; color: var(--green); text-align: right; }
+#tabbar button { position: relative; }
+#tabbar button[data-dot]:not([data-dot=""])::after { content: attr(data-dot); position: absolute; top: 3px; right: 3px;
+  min-width: 16px; height: 16px; padding: 0 4px; border-radius: 999px; background: var(--accent); color: #fff;
+  font-size: 9px; font-weight: 800; line-height: 16px; text-align: center; letter-spacing: 0; }

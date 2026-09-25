@@ -21,12 +21,13 @@
   <div id="track-status" class="pill green">—</div>
   <div class="stat"><span class="k">Giro</span><span class="v" id="lap">–</span></div>
   <div class="stat"><span class="k">Restano</span><span class="v" id="remaining">–</span></div>
-  <div class="stat"><span class="k">Aria</span><span class="v" id="w-air">–</span></div>
-  <div class="stat"><span class="k">Pista</span><span class="v" id="w-track">–</span></div>
-  <div class="stat"><span class="k">Vento</span><span class="v" id="w-wind">–</span></div>
-  <div class="stat"><span class="k">Umidità</span><span class="v" id="w-hum">–</span></div>
-  <div class="stat"><span class="k">Pressione</span><span class="v" id="w-press">–</span></div>
-  <div class="stat"><span class="k">Pioggia</span><span class="v" id="w-rain">–</span></div>
+  <button type="button" class="stat wx-toggle" id="wx-toggle" aria-expanded="false"><span class="k">Meteo</span><span class="v" id="wx-short">–</span></button>
+  <div class="stat wx"><span class="k">Aria</span><span class="v" id="w-air">–</span></div>
+  <div class="stat wx"><span class="k">Pista</span><span class="v" id="w-track">–</span></div>
+  <div class="stat wx"><span class="k">Vento</span><span class="v" id="w-wind">–</span></div>
+  <div class="stat wx"><span class="k">Umidità</span><span class="v" id="w-hum">–</span></div>
+  <div class="stat wx"><span class="k">Pressione</span><span class="v" id="w-press">–</span></div>
+  <div class="stat wx"><span class="k">Pioggia</span><span class="v" id="w-rain">–</span></div>
   <div class="stat" id="replay-box" hidden><span class="k">Replay</span><span class="v" id="replay-pos">–</span></div>
   <div id="hdr-tools">
     <button id="alerts-btn" type="button" title="tocca per suoni, vibrazione e schermo sempre acceso">Attiva avvisi</button>
@@ -205,13 +206,13 @@
   <button data-tab="board" class="on">Tabellone</button>
   <button data-tab="battle">Battaglia</button>
   <button data-tab="wall">Muretto</button>
-  <button data-tab="gaps">Gap</button>
-  <button data-tab="telemetry">Telemetria</button>
-  <button data-tab="map">Mappa</button>
-  <button data-tab="radio">Radio</button>
   <button data-tab="rc">Direzione</button>
+  <button data-tab="radio">Radio</button>
+  <button data-tab="map">Mappa</button>
+  <button data-tab="gaps">Gap</button>
   <button data-tab="perf">Prestazioni</button>
   <button data-tab="champ">Campionato</button>
+  <button data-tab="telemetry">Telemetria</button>
   <button data-tab="cmp">Confronto</button>
 </nav>
 

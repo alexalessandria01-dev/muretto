@@ -183,6 +183,9 @@
     $("#replay-box").hidden = s.replay_position == null;
     $("#replay-pos").textContent = fmtClock(s.replay_position);
     document.body.classList.toggle("show-metrics", prefs.metrics);
+    document.body.classList.toggle("race", isRace());  // su telefono in gara il numero grande è l'intervallo
+    $("#wx-short").textContent = [w.air ? `${w.air}°` : "", w.track ? `pista ${w.track}°` : "", String(w.rain) === "1" ? "PIOVE" : ""].filter(Boolean).join(" · ") || "–";
+    renderTabDots();
 
     trackLapChange(s.lap);
     trackAlert();
@@ -321,7 +324,7 @@
         <td class="pos">${d.pos}</td>
         <td class="col-drv"><span class="drv"><i style="background:${d.colour}"></i>${esc(d.tla)}</span>${gained}${drs}${st}${stewardBadges(d)}${flyBadge(d)}${battleBadges(d, tr)}</td>
         <td class="star ${isFav(d.num) ? "on" : ""}" title="preferito">★</td>
-        <td class="r col-gap">${esc(d.gap) || (d.pos === 1 ? '<span class="leader">LEADER</span>' : "")}</td>
+        <td class="r col-gap"><span class="g">${esc(d.gap) || (d.pos === 1 ? '<span class="leader">LEADER</span>' : "")}</span>${d.pos > 1 && d.interval ? `<span class="i ${d.catching ? "catching" : ""}">${esc(d.interval)}${d.interval_s != null && d.interval_s < 1 ? '<i class="drs1">sotto 1 s</i>' : ""}</span>` : ""}</td>
         <td class="r col-int ${d.catching ? "catching" : ""}">${esc(d.interval)}</td>
         <td class="r col-last ${d.last_of ? "of" : d.last_pf ? "pf" : ""}">${esc(d.last)}</td>
         <td class="r col-best">${esc(d.best)}</td>
@@ -1177,6 +1180,16 @@
   window.addEventListener("resize", () => { chartKey = ""; gapKey = ""; if (state) { renderTelemetry(); renderGaps(); } });
 
   // ------------------------------------------------------------ schede e impostazioni (telefono)
+  /** Pallino sulle schede Radio e Direzione quando arriva qualcosa di nuovo mentre si guarda altro. */
+  const seenCount = { radio: null, rc: null };
+  function renderTabDots() {
+    const counts = { radio: state.radio.length, rc: state.race_control_total ?? state.race_control.length };
+    for (const k of Object.keys(counts)) {
+      if (seenCount[k] === null || prefs.tab === k) seenCount[k] = counts[k];
+      const n = counts[k] - seenCount[k], b = document.querySelector(`#tabbar button[data-tab="${k}"]`);
+      b.dataset.dot = n > 0 ? String(n) : "";
+    }
+  }
   /** Mostra un solo pannello. I grafici vanno ricostruiti: fino a un attimo prima avevano larghezza 0. */
   function setTab(name) {
     prefs.tab = name; save("tab", name);
@@ -1213,6 +1226,10 @@
   $("#rc-ticker").addEventListener("click", () => {
     if (isMobile()) setTab("rc");
     else $("#rc").scrollIntoView({ behavior: "smooth", block: "center" });
+  });
+  $("#wx-toggle").addEventListener("click", (e) => {
+    const open = document.body.classList.toggle("wx-open");
+    e.currentTarget.setAttribute("aria-expanded", String(open));
   });
   $("#settings-toggle").addEventListener("click", (e) => {
     const open = document.body.classList.toggle("settings-open");
