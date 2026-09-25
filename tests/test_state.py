@@ -119,3 +119,13 @@ def test_red_flag_stays_red_when_f1_sends_all_clear():
     assert st.snapshot()["session"]["track"] == "red"
     st.apply("SessionStatus", {"Status": "Started"}, 30.0)
     assert st.snapshot()["session"]["track"] == "green"
+
+
+def test_overtakes_skip_the_count_21_entries():
+    from muretto.state import RaceState
+    st = RaceState()
+    # a Monza per Russell ogni sorpasso è seguito da una voce con count 21 che non è un sorpasso
+    st.apply("OvertakeSeries", {"Overtakes": {"63": [{"Timestamp": "a", "count": 1}]}}, 1.0)
+    st.apply("OvertakeSeries", {"Overtakes": {"63": {"1": {"Timestamp": "b", "count": 21}}}}, 2.0)
+    st.apply("OvertakeSeries", {"Overtakes": {"63": {"2": {"Timestamp": "c", "count": 2}}}}, 3.0)
+    assert st.overtakes() == {"63": 3}

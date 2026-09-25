@@ -332,7 +332,7 @@
         <div class="row"><span class="k">Giri / soste</span><span class="v">${d.laps || 0} / ${stopsTxt(d)}</span></div>
         ${stops ? `<div class="row"><span class="k">Soste</span><span class="v">${stops}</span></div>`
           : pt.duration ? `<div class="row"><span class="k">Tempo in pit lane</span><span class="v">${fmtPitTime(pt.duration)}${pt.lap ? ` (giro ${esc(pt.lap)})` : ""}</span></div>` : ""}
-        ${isRace() ? `<div class="row"><span class="k">Sorpassi fatti</span><span class="v">${d.overtakes || 0}</span></div>` : ""}
+        ${isRace() ? `<div class="row"><span class="k" title="la F1 conta anche i doppiaggi">Sorpassi (con doppiaggi)</span><span class="v">${d.overtakes || 0}</span></div>` : ""}
         ${isRace() && cr && !d.retired ? `<div class="row"><span class="k">Mescole usate</span><span class="v">${esc(cr.used.join(", ") || "–")}${cr.wet ? " · regola sospesa (pioggia)" : cr.ok ? ' <span class="good">✓</span>' : mixDue() ? ' <span class="warn">deve ancora cambiare</span>' : ""}</span></div>` : ""}
         ${swTxt ? `<div class="row"><span class="k">Commissari</span><span class="v">${swTxt}</span></div>` : ""}
         ${isRace() ? `<div class="row"><span class="k">Se entra ora</span><span class="v" style="text-align:right">${isRedFlag() ? RED_PIT : exitTxt}</span></div>

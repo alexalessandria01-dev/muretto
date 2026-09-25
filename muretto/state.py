@@ -297,11 +297,16 @@ class RaceState:
         return out
 
     def overtakes(self) -> dict[str, int]:
-        """Sorpassi fatti. Verificato sul GP d'Italia 2026: dopo un evento la posizione
-        del pilota migliora nel 74% dei casi e peggiora nel 7%."""
+        """Sorpassi in pista (OvertakeSeries), doppiaggi compresi: la F1 li conta allo stesso modo.
+
+        Il campo "count" vale 1 (a volte 2) per un sorpasso, ma per alcuni piloti dopo ogni
+        sorpasso arriva una voce con count 21 (a Monza Russell: 1, 21, 1, 21...): non è un
+        sorpasso, si scarta. Verificato a Monza che dopo un evento la posizione migliora nel 74%
+        dei casi e peggiora nel 7%."""
         out = {}
         for num, evs in (self.data.get("OvertakeSeries", {}).get("Overtakes") or {}).items():
-            out[str(num)] = sum(int((e or {}).get("count") or 0) for e in self._items(evs))
+            counts = [int((e or {}).get("count") or 0) for e in self._items(evs)]
+            out[str(num)] = sum(c for c in counts if 0 < c <= 3)
         return out
 
     def _lap_positions(self, entry) -> list[int]:
