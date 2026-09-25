@@ -118,3 +118,54 @@ def test_fill_lapped_gaps_skips_retired():
     rows = [{"gap_s": 0.0, "interval": ""}, {"gap_s": None, "interval": "+5.0", "retired": True}]
     fill_lapped_gaps(rows)
     assert rows[1]["gap_s"] is None
+
+
+def _hist(gaps, pos, clean=True, pit=False, start=10):
+    """Storia giri come nello snapshot: [giro, secondi, gap_s, posizione, pulito, box]."""
+    return [[start + i, 90.0, g, pos, clean, pit] for i, g in enumerate(gaps)]
+
+
+def test_catch_forecast_closing_car():
+    from muretto.strategy import catch_forecast
+    front = _hist([10.0, 10.0, 10.0, 10.0], pos=3)
+    back = _hist([13.1, 12.4, 11.7, 11.0], pos=4)  # recupera 0,7 s/giro, è a 1,0... poi 0,3 s in più
+    f = catch_forecast(front, back, interval_now=1.7, total_laps=53)
+    assert f["rate"] == 0.7 and f["lap"] == 14 and f["in_time"] is True  # ultimo giro 13, 1 giro per scendere sotto 1 s
+
+
+def test_catch_forecast_needs_four_clean_laps_and_real_closing():
+    from muretto.strategy import catch_forecast
+    front = _hist([10.0] * 4, pos=3)
+    assert catch_forecast(front, _hist([13.0, 12.9, 12.85, 12.8], pos=4), None, 53) is None   # 0,07 s/giro: rumore
+    assert catch_forecast(front, _hist([13.1, 12.4, 11.7, 11.0], pos=4, clean=False), None, 53) is None
+    assert catch_forecast(front, _hist([27.0, 26.0, 25.0, 24.0], pos=4), None, 53) is None    # 14 s a 1 s/giro: 13 giri, oltre 8
+
+
+def test_catch_forecast_after_the_end_and_unknown_total():
+    from muretto.strategy import catch_forecast
+    front = _hist([10.0] * 4, pos=3, start=48)
+    back = _hist([14.0, 13.5, 13.0, 12.5], pos=4, start=48)
+    assert catch_forecast(front, back, None, 53)["in_time"] is False  # servono ~6 giri, la gara finisce prima
+    assert catch_forecast(front, back, None, 0)["in_time"] is None      # TotalLaps a 0: non si dice
+
+
+def test_catch_forecast_ignores_lapped_cars():
+    from muretto.strategy import catch_forecast
+    front = _hist([10.0] * 4, pos=3)
+    back = [[10 + i, 90.0, None, 4, True, False] for i in range(4)]
+    assert catch_forecast(front, back, None, 53) is None
+
+
+def test_stuck_in_wake():
+    from muretto.strategy import stuck_laps
+    front = _hist([10.0] * 6, pos=3)
+    assert stuck_laps(front, _hist([10.8, 10.7, 10.9, 10.6, 10.8, 10.7], pos=4)) == 6
+    assert stuck_laps(front, _hist([10.8, 10.7, 10.9], pos=4)) is None            # meno di 4 giri
+    assert stuck_laps(front, _hist([12.5, 12.4, 12.6, 12.5, 12.4, 12.6], pos=4)) is None  # troppo lontano
+
+
+def test_trains():
+    from muretto.strategy import trains
+    rows = [{"num": "1", "interval_s": None}, {"num": "2", "interval_s": 0.6}, {"num": "3", "interval_s": 0.9},
+            {"num": "4", "interval_s": 2.5}, {"num": "5", "interval_s": 0.5}, {"num": "6", "interval_s": 0.4, "inpit": True}]
+    assert trains(rows) == [["1", "2", "3"]]  # 4-5 solo in due, e il 6 è ai box

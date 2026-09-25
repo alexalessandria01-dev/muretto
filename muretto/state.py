@@ -551,6 +551,7 @@ class RaceState:
                 "lap_positions": self._lap_positions(lap_series.get(num)),
             })
         rows.sort(key=lambda r: r["pos"])
+        lc = self.data.get("LapCount", {})
         quali = self._qualifying(rows, lines, part) if part else {}
         if session_type == "Race":
             strategy.fill_lapped_gaps(rows)  # i doppiati hanno "1 L": il distacco si ricava dagli intervalli
@@ -558,8 +559,23 @@ class RaceState:
         # strategia per tutti (il browser sceglie il team a fuoco)
         field = [(r["num"], None if r["retired"] or r["stopped"] else r["gap_s"]) for r in rows]
         by_pos = {r["pos"]: r for r in rows}
+        racing = session_type == "Race" and track in ("green", "yellow")  # con SC/VSC/rossa le previsioni non valgono
+        total_laps = lc.get("TotalLaps")
         for r in rows:
             r["exit"] = None if r["retired"] else strategy.pit_exit(r["num"], field, pit_loss)
+            # battaglia con chi sta davanti: tendenza dell'intervallo, "lo prende tra N giri", "bloccato in scia"
+            ahead = by_pos.get(r["pos"] - 1)
+            r["ahead_trend"] = r["chase"] = r["stuck"] = None
+            if session_type == "Race" and ahead and not r["retired"] and not r["stopped"]:
+                fh, bh = ahead["lap_history"], r["lap_history"]
+                r["ahead_trend"] = strategy.interval_trend(fh, bh)
+                if racing:
+                    r["chase"] = strategy.catch_forecast(fh, bh, r.get("interval_s"), total_laps)
+                    if r["chase"]:
+                        r["chase"]["on"] = ahead["tla"]
+                    n = strategy.stuck_laps(fh, bh)
+                    if n:
+                        r["stuck"] = {"behind": ahead["tla"], "laps": n}
             r["deg"] = strategy.degradation(self._current_stint_laps(r["num"])[-10:])
             behind = by_pos.get(r["pos"] + 1)
             r["undercut"] = None
@@ -585,7 +601,6 @@ class RaceState:
         rc = [m for m in rc if isinstance(m, dict)][-60:]
 
         w = self.data.get("WeatherData", {})
-        lc = self.data.get("LapCount", {})
         clock = self.data.get("ExtrapolatedClock", {})
         return {
             "session": {
@@ -617,6 +632,7 @@ class RaceState:
             "drivers": rows,
             "radio": radio[-40:],
             "race_control": rc,
+            "trains": strategy.trains(rows) if session_type == "Race" else [],  # gruppi di 3+ entro 1 s
             "race_control_total": len([m for m in rc_all if isinstance(m, dict)]),
             "incidents": steward["incidents"][-30:],
             "championship": self.championship(),

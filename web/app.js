@@ -129,13 +129,38 @@
     return { pos: 1 + ahead.length, lost: 1 + ahead.length - now, behind: ahead.at(-1) ? [ahead.at(-1)[0], (exitGap - ahead.at(-1)[1]).toFixed(1)] : null, aheadOf: behind[0] ? [behind[0][0], (behind[0][1] - exitGap).toFixed(1)] : null };
   }
 
-  /** Variazione dell'intervallo tra due piloti negli ultimi `n` giri (negativo = si avvicina chi sta dietro). */
-  function intervalTrend(front, back, n = 3) {
-    const gf = Object.fromEntries((front.lap_history || []).map((l) => [l[0], l[2]]));
-    const pts = (back.lap_history || []).filter((l) => l[2] != null && gf[l[0]] != null).map((l) => [l[0], l[2] - gf[l[0]]]);
-    if (pts.length < 2) return null;
-    const last = pts.slice(-(n + 1));
-    return (last.at(-1)[1] - last[0][1]) / (last.length - 1);
+  // ------------------------------------------------------------ battaglie (calcoli sul server, strategy.py)
+  /** Trenino (3+ auto entro 1 s) di cui fa parte un pilota, se c'è. */
+  const trainOf = (num) => (state.trains || []).find((t) => t.includes(num)) || null;
+  /** "ANT recupera 0,7 s/giro su RUS → a questo ritmo sotto 1 s al giro ~48" */
+  function chaseTxt(d) {
+    const c = d?.chase; if (!c) return "";
+    const end = c.in_time === false ? "a questo ritmo non ce la fa prima della fine" : `a questo ritmo sotto 1 s al giro ~${c.lap}`;
+    return `<b>${esc(d.tla)}</b> recupera ${c.rate.toFixed(2)} s/giro su <b>${esc(c.on)}</b> → ${end}`;
+  }
+  const stuckTxt = (d) => d?.stuck ? `<b>${esc(d.tla)}</b> <span class="warn">BLOCCATO</span> in scia a <b>${esc(d.stuck.behind)}</b> da ${d.stuck.laps} giri` : "";
+  /** Righe di battaglia per il pilota seguito: chi lo prende, chi prende lui, chi è bloccato. */
+  function battleLines(me) {
+    if (!isRace() || !me) return "";
+    if ((me.lap_history || []).length < 4) return '<div class="blines"><span class="hint">servono 4 giri di dati per le previsioni di battaglia</span></div>';
+    const behind = state.drivers.find((d) => d.pos === me.pos + 1);
+    const lines = [chaseTxt(me), stuckTxt(me), behind?.chase?.on === me.tla ? chaseTxt(behind) : "", behind?.stuck ? stuckTxt(behind) : ""].filter(Boolean);
+    return lines.length ? `<div class="blines">${lines.map((l) => `<div>${l}</div>`).join("")}</div>` : "";
+  }
+  /** Tabellone: trenino (sul primo), "lo prende al giro ~N", "in scia da N giri". */
+  function battleBadges(d, tr) {
+    let out = tr && tr[0] === d.num ? `<span class="flagb trainb" title="${tr.length} auto entro 1 s l'una dall'altra">TRENINO ${tr.length}</span>` : "";
+    if (d.chase) out += `<span class="flagb chase" title="recupera ${d.chase.rate.toFixed(2)} s/giro su ${esc(d.chase.on)}: a questo ritmo">${d.chase.in_time === false ? "NON CE LA FA" : `→ G${d.chase.lap}`}</span>`;
+    if (d.stuck) out += `<span class="flagb stuck" title="bloccato in scia a ${esc(d.stuck.behind)}">SCIA ${d.stuck.laps}</span>`;
+    return out;
+  }
+  /** Aria all'uscita dai box: dietro un trenino o a meno di 1 s c'è aria sporca. */
+  function airTxt(e) {
+    if (!e || !e.behind) return "";
+    const [num, gap] = [e.behind[0], parseFloat(e.behind[1])], t = trainOf(num);
+    if (t && gap < 1.5) return ` · <span class="bad">esci dietro al trenino ${t.map(tlaOf).join("-")}: aria sporca</span>`;
+    if (gap < 1.0) return ` · <span class="warn">aria sporca dietro a ${esc(tlaOf(num))}</span>`;
+    return ' · <span class="good">aria libera</span>';
   }
 
   // ------------------------------------------------------------ render
@@ -232,7 +257,7 @@
     let pit = "";
     if (isRace() && !me.retired) {
       const e = pitExit(me.num, pitLossNow());
-      pit = isRedFlag() ? `<div class="h-pit">${RED_PIT}</div>` : `<div class="h-pit">Se entra ora (${pitLossNow()} s): ${!e ? "—" : `esce <b>P${e.pos}</b>${e.lost > 0 ? ` <span class="warn">(−${e.lost})</span>` : ' <span class="good">(nessuna posizione persa)</span>'}`}</div>`;
+      pit = isRedFlag() ? `<div class="h-pit">${RED_PIT}</div>` : `<div class="h-pit">Se entra ora (${pitLossNow()} s): ${!e ? "—" : `esce <b>P${e.pos}</b>${e.lost > 0 ? ` <span class="warn">(−${e.lost})</span>` : ' <span class="good">(nessuna posizione persa)</span>'}${airTxt(e)}`}</div>`;
     }
 
     el.innerHTML = `
@@ -245,6 +270,7 @@
       <div class="h-grid">${cells}</div>
       ${notes ? `<div class="h-notes">${notes}</div>` : ""}
       <div class="h-neigh battle">${whoRow(ahead, me, "ahead")}${whoRow(behind, me, "behind")}</div>
+      ${battleLines(me)}
       ${pit}`;
   }
 
@@ -285,10 +311,11 @@
       const stints = d.stints.map((x) => `<b class="${x.compound}" style="width:${(100 * (x.laps || 0) / total).toFixed(1)}%" title="${x.compound} ${x.laps} giri${x.new ? "" : " (usata)"}"></b>`).join("");
       // il taglio lo dice la F1 (NoEntries): con 22 macchine in Q1 passano 16, non 15
       const cut = state.session.cut, danger = quali && part && cut && d.pos > cut;
-      const cls = [d.num === prefs.follow ? "follow" : isFav(d.num) ? "fav" : "", d.retired || d.stopped ? "retired" : "", d.knocked_out ? "out" : "", danger ? "danger" : "", d.num === openNum ? "open" : ""].join(" ");
+      const tr = trainOf(d.num), trCls = !tr ? "" : `train${tr[0] === d.num ? " train-first" : ""}${tr.at(-1) === d.num ? " train-last" : ""}`;
+      const cls = [d.num === prefs.follow ? "follow" : isFav(d.num) ? "fav" : "", d.retired || d.stopped ? "retired" : "", d.knocked_out ? "out" : "", danger ? "danger" : "", d.num === openNum ? "open" : "", trCls].join(" ");
       return `<tr class="${cls}" data-num="${d.num}">
         <td class="pos">${d.pos}</td>
-        <td class="col-drv"><span class="drv"><i style="background:${d.colour}"></i>${esc(d.tla)}</span>${gained}${drs}${st}${stewardBadges(d)}${flyBadge(d)}</td>
+        <td class="col-drv"><span class="drv"><i style="background:${d.colour}"></i>${esc(d.tla)}</span>${gained}${drs}${st}${stewardBadges(d)}${flyBadge(d)}${battleBadges(d, tr)}</td>
         <td class="star ${isFav(d.num) ? "on" : ""}" title="preferito">★</td>
         <td class="r col-gap">${esc(d.gap) || (d.pos === 1 ? '<span class="leader">LEADER</span>' : "")}</td>
         <td class="r col-int ${d.catching ? "catching" : ""}">${esc(d.interval)}</td>
@@ -312,7 +339,7 @@
     if (!d) return `<div class="who"><span class="p">–</span><span>${role === "ahead" ? "nessuno davanti: è in testa" : "nessuno dietro"}</span></div>`;
     let trend = "";
     if (role !== "me" && isRace()) {
-      const t = role === "ahead" ? intervalTrend(d, me) : intervalTrend(me, d);
+      const t = role === "ahead" ? me.ahead_trend : d.ahead_trend;  // strategy.interval_trend
       if (t != null) { const closing = role === "ahead" ? t < 0 : t > 0; trend = `<span class="trend ${closing ? "closing" : "opening"}">${closing ? "si avvicina" : "si allontana"} ${Math.abs(t).toFixed(2)} s/giro</span>`; }
     }
     const iv = role === "ahead" ? me.interval : role === "behind" ? d.interval : d.gap || "leader";
@@ -335,9 +362,10 @@
     if (isRace() && !me.retired) {
       const pl = state.pit_loss, n = pitExit(me.num, pitLossNormal()), sc = pitExit(me.num, pl.sc);
       const fmt = (r) => !r ? "–" : `<b>P${r.pos}</b>${r.lost > 0 ? ` (−${r.lost})` : ""}${r.behind ? `, dietro ${tlaOf(r.behind[0])} di ${r.behind[1]} s` : ""}${r.aheadOf ? `, davanti a ${tlaOf(r.aheadOf[0])} di ${r.aheadOf[1]} s` : ""}`;
-      exit = isRedFlag() ? `<div class="exit">${RED_PIT}</div>` : `<div class="exit">Se entra ora (${pitLossNow()} s): ${fmt(pitExit(me.num, pitLossNow()))}</div>` + (state.session.track === "green" ? `<div class="exit">Sotto Safety Car (${pl.sc} s): ${fmt(sc)}</div>` : `<div class="exit">In condizioni normali (${pitLossNormal()} s): ${fmt(n)}</div>`);
+      const now = pitExit(me.num, pitLossNow());
+      exit = isRedFlag() ? `<div class="exit">${RED_PIT}</div>` : `<div class="exit">Se entra ora (${pitLossNow()} s): ${fmt(now)}${airTxt(now)}</div>` + (state.session.track === "green" ? `<div class="exit">Sotto Safety Car (${pl.sc} s): ${fmt(sc)}</div>` : `<div class="exit">In condizioni normali (${pitLossNormal()} s): ${fmt(n)}</div>`);
     }
-    $("#battle-body").innerHTML = `<div class="battle">${whoRow(ahead, me, "ahead")}${whoRow(me, me, "me")}${whoRow(behind, me, "behind")}</div>${exit}`;
+    $("#battle-body").innerHTML = `<div class="battle">${whoRow(ahead, me, "ahead")}${whoRow(me, me, "me")}${whoRow(behind, me, "behind")}</div>${battleLines(me)}${exit}`;
   }
 
   function renderWall() {
@@ -348,7 +376,7 @@
       const loss = pitLossNow(), e = d.retired ? null : pitExit(d.num, loss), deg = d.deg;
       const exitTxt = !e ? "—" : `<span class="big ${e.lost > 0 ? "warn" : "good"}">P${e.pos}</span> ${e.lost > 0 ? `(−${e.lost})` : "(nessuna posizione persa)"}`
         + (e.behind ? `<br>dietro <b>${esc(tlaOf(e.behind[0]))}</b> di ${e.behind[1]} s` : "<br>in testa")
-        + (e.aheadOf ? ` · davanti a <b>${esc(tlaOf(e.aheadOf[0]))}</b> di ${e.aheadOf[1]} s` : "");
+        + (e.aheadOf ? ` · davanti a <b>${esc(tlaOf(e.aheadOf[0]))}</b> di ${e.aheadOf[1]} s` : "") + (e ? `<br>${airTxt(e).replace(/^ · /, "")}` : "");
       // verdetto del server (strategy.undercut_threat): qui si mostra e basta, senza rifare il conto
       const u = d.undercut;
       // al netto della benzina (stima): tempi piatti vogliono già dire gomma che cala di ~0,05 s/giro

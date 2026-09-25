@@ -482,3 +482,14 @@ body.m #leaderboard tr.cutrow td { display: block; border: 0; background: none; 
 /* ---------- dati fermi */
 #stale { position: sticky; top: 0; z-index: 40; margin: 8px 0 0; padding: 9px 12px; border-radius: var(--r-sm);
   background: var(--yellow); color: #07090c; font-weight: 700; font-size: 13px; text-align: center; }
+
+/* ---------- battaglie: trenini, "lo prende", "in scia" */
+.flagb.trainb { background: rgba(255, 159, 10, .18); color: #ff9f0a; }
+.flagb.chase { background: rgba(46, 224, 106, .14); color: var(--green); }
+.flagb.stuck { background: rgba(255, 212, 38, .14); color: var(--yellow); }
+tr.train td:first-child { box-shadow: inset 3px 0 0 #ff9f0a; }
+body.m #leaderboard tr.train { border-left-color: #ff9f0a; }
+body.m #leaderboard tr.train:not(.train-last) { margin-bottom: 1px; border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+body.m #leaderboard tr.train:not(.train-first) { border-top-left-radius: 0; border-top-right-radius: 0; }
+.blines { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
+.blines > div { padding: 6px 9px; border-radius: var(--r-sm); background: var(--sunken); border-left: 3px solid var(--green); }
