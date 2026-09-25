@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import statistics
 from statistics import median
 
 # Tempo perso in pit lane (ingresso → uscita, senza la sosta) per circuito,
@@ -89,20 +90,31 @@ def pit_exit(driver: str, field: list[tuple[str, float | None]], pit_loss: float
     }
 
 
-def degradation(laps: list[tuple[int, float, bool]]) -> dict | None:
-    """Retta dei minimi quadrati sui giri puliti ``(giro, secondi, pulito)`` dello stint.
+FUEL_PER_LAP = 0.05  # s/giro che si guadagnano bruciando benzina: stima (~0,03 s/kg × ~1,7 kg/giro)
+MIN_DEG_LAPS = 4     # con 3 giri la pendenza balla troppo (fino a -0,7 s/giro a inizio stint)
 
-    Ritorna pendenza (s/giro), intercetta, numero di giri usati e ultimo giro pulito.
+
+def degradation(laps: list[tuple[int, float, bool]]) -> dict | None:
+    """Quanto rallenta la gomma, in s/giro, sui giri puliti ``(giro, secondi, pulito)`` dello stint.
+
+    - si scartano i giri più lenti di oltre 1 s della mediana: a Monza il giro di ripartenza dopo
+      la rossa (~200 s) risultava pulito e portava il degrado a -40 s/giro per tutti;
+    - pendenza di Theil-Sen (mediana delle pendenze fra coppie): un giro anomalo non la sposta;
+    - "slope" è al netto della benzina: la macchina si alleggerisce di ~0,05 s/giro, quindi a
+      tempi piatti la gomma sta già perdendo quei 0,05. "raw_slope" è quella dei tempi così come sono.
     """
     pts = [(n, t) for n, t, clean in laps if clean and t]
-    if len(pts) < 3:
+    if len(pts) < MIN_DEG_LAPS:
         return None
-    xs = [p[0] for p in pts]
-    ys = [p[1] for p in pts]
-    mx, my = sum(xs) / len(xs), sum(ys) / len(ys)
-    sxx = sum((x - mx) ** 2 for x in xs)
-    slope = sum((x - mx) * (y - my) for x, y in pts) / sxx if sxx else 0.0
-    return {"slope": round(slope, 4), "intercept": round(my - slope * mx, 3), "laps": len(pts), "last_clean": ys[-1]}
+    med = statistics.median(t for _, t in pts)
+    pts = [(n, t) for n, t in pts if t <= med + 1.0]
+    if len(pts) < MIN_DEG_LAPS:
+        return None
+    slopes = [(t2 - t1) / (n2 - n1) for i, (n1, t1) in enumerate(pts) for n2, t2 in pts[i + 1:] if n2 != n1]
+    raw = statistics.median(slopes) if slopes else 0.0
+    intercept = statistics.median(t - raw * n for n, t in pts)
+    return {"slope": round(raw + FUEL_PER_LAP, 4), "raw_slope": round(raw, 4), "fuel": FUEL_PER_LAP,
+            "intercept": round(intercept, 3), "laps": len(pts), "last_clean": pts[-1][1]}
 
 
 def undercut_threat(interval_behind: float | None, pit_loss: float, my_tyre_age: int, their_tyre_age: int, margin: float = 3.0) -> dict | None:

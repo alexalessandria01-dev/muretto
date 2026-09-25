@@ -146,6 +146,11 @@ class RaceState:
                 continue
             if d.get("InPit") or d.get("PitOut"):
                 self._pit_flag[num] = True
+            # sosta vista solo dal contatore (per esempio dopo un buco di rete: lo snapshot arriva a pilota
+            # già uscito, senza InPit/PitOut). Senza, il degrado mescola due stint (a Monza -1,33 invece di -0,07)
+            prev_line = self.data.get("TimingData", {}).get("Lines", {}).get(num) or {}
+            if (d.get("NumberOfPitStops") or 0) > (prev_line.get("NumberOfPitStops") or 0):
+                self._pit_flag[num] = True
             n = d.get("NumberOfLaps")
             if n is None:
                 continue
@@ -172,7 +177,9 @@ class RaceState:
                 gap_s = 0.0
             self.laps[num].append(Lap(lap=n, seconds=secs, track_status=status, clean=clean, pit=pit, ts=ts,
                                       gap_s=gap_s, position=position))
-            self._pit_flag[num] = False
+            # PitOut nello stesso messaggio del giro chiuso: il giro che comincia ora è l'uscita dai box
+            # (nelle libere di Baku 62 volte in FP2: giri da 7 minuti risultavano "puliti")
+            self._pit_flag[num] = bool(d.get("PitOut"))
             self._lap_start[num] = ts
 
     def _apply_car(self, data, ts: float):

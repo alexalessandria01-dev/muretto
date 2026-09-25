@@ -312,7 +312,9 @@
         + (e.aheadOf ? ` · davanti a <b>${esc(tlaOf(e.aheadOf[0]))}</b> di ${e.aheadOf[1]} s` : "");
       const back = state.drivers.find((x) => x.pos === d.pos + 1), ivb = back ? parseFloat(String(back.interval).replace("+", "")) : NaN;
       const u = back && !isNaN(ivb) ? { by: back.tla, interval: ivb, window: ivb < loss + 3, needs_per_lap: Math.max(0, (loss - ivb) / 2).toFixed(2), tyre_delta: d.age - back.age } : null;
-      const degTxt = !deg ? "servono 3 giri puliti" : `<span class="${deg.slope > 0.2 ? "bad" : deg.slope > 0.08 ? "warn" : "good"}">${deg.slope > 0 ? "+" : ""}${deg.slope.toFixed(3)} s/giro</span> su ${deg.laps} giri`;
+      // al netto della benzina (stima): tempi piatti vogliono già dire gomma che cala di ~0,05 s/giro
+      const degTxt = !deg ? "servono 4 giri puliti" : `<span class="${deg.slope > 0.25 ? "bad" : deg.slope > 0.12 ? "warn" : "good"}">${deg.slope > 0 ? "+" : ""}${deg.slope.toFixed(2)} s/giro</span> su ${deg.laps} giri`
+        + `<br><span class="hint">${isRace() ? "al netto della benzina (stima)" : "indicativo: nelle libere si alternano giri lanciati e lenti"}</span>`;
       const uTxt = !u ? "nessuno dietro" : `<b>${esc(u.by)}</b> a ${u.interval} s: ${u.window ? '<span class="warn">in finestra</span>' : '<span class="good">fuori finestra</span>'}`
         + `<br>gli servono ${u.needs_per_lap} s/giro · gomme ${u.tyre_delta > 0 ? `mie +${u.tyre_delta} giri` : u.tyre_delta < 0 ? `sue +${-u.tyre_delta} giri` : "pari"}`;
       const bs = d.best_speeds || {};

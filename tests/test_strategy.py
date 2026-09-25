@@ -50,16 +50,24 @@ def test_pit_exit_lapped_cars_ignored():
     assert r["ahead_of"] is None
 
 
-def test_degradation_linear_fit_on_clean_laps():
+def test_degradation_on_clean_laps_with_fuel_correction():
     laps = [(10, 85.0, True), (11, 85.1, True), (12, 85.2, True), (13, 95.0, False), (14, 85.4, True)]
     d = degradation(laps)
-    assert abs(d["slope"] - 0.1) < 1e-6
+    assert abs(d["raw_slope"] - 0.1) < 1e-6
+    assert abs(d["slope"] - (0.1 + d["fuel"])) < 1e-6  # al netto della benzina
     assert d["laps"] == 4
     assert d["last_clean"] == 85.4
 
 
-def test_degradation_needs_three_laps():
-    assert degradation([(1, 85.0, True), (2, 85.1, True)]) is None
+def test_degradation_ignores_the_restart_lap_after_a_red_flag():
+    # Monza 2026: il giro di ripartenza (~200 s) risultava pulito e dava -40 s/giro
+    laps = [(5, 199.0, True), (6, 87.2, True), (7, 87.3, True), (8, 87.3, True), (9, 87.4, True)]
+    d = degradation(laps)
+    assert d["laps"] == 4 and -0.01 < d["raw_slope"] < 0.2
+
+
+def test_degradation_needs_four_laps():
+    assert degradation([(1, 85.0, True), (2, 85.1, True), (3, 85.2, True)]) is None
 
 
 def test_undercut_threat():
