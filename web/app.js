@@ -1098,75 +1098,158 @@
     if (state.session.track === "green") on.clear();
     return on;
   }
-  function renderMap() {
-    if ($("#map").hidden || !isVisible($("#map"))) return;
+  /* Disegno ispirato a f1-dash (pista spessa, settori gialli colorati, traguardo, sigle leggibili)
+   * e a f1-telemetry (MIT): ogni macchina ha una posizione "visiva" che a ogni fotogramma insegue
+   * quella calcolata e non torna indietro, così scorre invece di saltare ogni mezzo secondo. */
+  const forceEstimate = new URLSearchParams(location.search).has("nogps");  // prova della diretta col replay
+  const LERP = 0.16;                 // quanto della distanza recuperare a ogni fotogramma
+  const carVis = {};                 // num -> { u: giri non avvolti, i: punto vicino } oppure { x, y }
+  let mapRaf = 0, mapLayer = null, mapLayerKey = "";
+  /** Frazione di giro (0–1) del punto del tracciato più vicino a [x, y]; cerca vicino a `hint` se c'è. */
+  function fracOf([x, y], hint) {
+    const { order, cum, total } = getTrackModel(), n = order.length;
+    let best = 0, bd = Infinity;
+    const scan = (i) => { const [px, py] = order[(i % n + n) % n], d = (px - x) ** 2 + (py - y) ** 2; if (d < bd) { bd = d; best = (i % n + n) % n; } };
+    if (hint != null) for (let k = -40; k <= 40; k++) scan(hint + k);
+    if (hint == null || bd > 250 ** 2) for (let i = 0; i < n; i++) scan(i);   // perso: ricerca completa
+    return { u: cum[best] / total, i: best };
+  }
+  function renderMap() { if (!mapRaf) mapRaf = requestAnimationFrame(mapLoop); }
+  function mapLoop() {
+    mapRaf = 0;
+    if (!state || document.hidden || $("#map").hidden || !isVisible($("#map"))) return;
+    drawMap();
+    mapRaf = requestAnimationFrame(mapLoop);
+  }
+  document.addEventListener("visibilitychange", () => { if (!document.hidden && state) renderMap(); });
+  function setHint(t) { const h = $("#map-hint"); if (h.textContent !== t) h.textContent = t; }
+  function drawMap() {
     loadMap();
     const cv = $("#map-canvas"), ctx = cv.getContext("2d");
-    ctx.clearRect(0, 0, cv.width, cv.height);
     const rot = mapData ? (mapData.rotation || 0) * Math.PI / 180 : 0;
     const base = mapData ? mapData.x.map((x, i) => [x, mapData.y[i]]) : Object.values(trail).flat();
-    if (base.length < 20) { ctx.fillStyle = "#8b93a1"; ctx.font = "12px sans-serif"; ctx.fillText("in attesa delle posizioni GPS o del tracciato", 14, 24); return; }
-    let cx = 0, cy = 0; for (const [x, y] of base) { cx += x; cy += y; } cx /= base.length; cy /= base.length;
+    // canvas nitido anche su schermi ad alta densità: pixel veri = pixel CSS × devicePixelRatio
+    const dpr = Math.min(window.devicePixelRatio || 1, 3), W = cv.clientWidth || 640;
+    let cx = 0, cy = 0; for (const [x, y] of base) { cx += x; cy += y; } cx /= base.length || 1; cy /= base.length || 1;
     const R = ([x, y]) => [cx + (x - cx) * Math.cos(rot) - (y - cy) * Math.sin(rot), cy + (x - cx) * Math.sin(rot) + (y - cy) * Math.cos(rot)];
     const pts = base.map(R);
     let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
     for (const [x, y] of pts) { if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y; }
-    const pad = 36, sc = Math.min((cv.width - 2 * pad) / (maxX - minX || 1), (cv.height - 2 * pad) / (maxY - minY || 1));
-    const ox = (cv.width - (maxX - minX) * sc) / 2, oy = (cv.height - (maxY - minY) * sc) / 2;
-    const P = ([x, y]) => [ox + (x - minX) * sc, cv.height - (oy + (y - minY) * sc)];
+    const aspect = Math.max(.55, Math.min(1.05, (maxY - minY) / (maxX - minX || 1) + .12));
+    const H = Math.round(W * aspect);
+    if (cv.width !== Math.round(W * dpr) || cv.height !== Math.round(H * dpr)) { cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); cv.style.height = H + "px"; }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+    if (base.length < 20) { ctx.fillStyle = "#8b93a1"; ctx.font = "12px sans-serif"; ctx.fillText("in attesa delle posizioni GPS o del tracciato", 14, 24); return; }
+    const pad = 44, sc = Math.min((W - 2 * pad) / (maxX - minX || 1), (H - 2 * pad) / (maxY - minY || 1));
+    const ox = (W - (maxX - minX) * sc) / 2, oy = (H - (maxY - minY) * sc) / 2;
+    const P = ([x, y]) => [ox + (x - minX) * sc, H - (oy + (y - minY) * sc)];
+    const [tcx, tcy] = P(R([cx, cy]));
+    const yel = yellowSectors(), track = state.session.track;
+    let hint = "";
     if (mapData) {
-      ctx.lineWidth = 8; ctx.lineJoin = "round"; ctx.strokeStyle = "#2c323b"; ctx.beginPath();
-      pts.forEach((p, i) => { const [x, y] = P(p); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }); ctx.closePath(); ctx.stroke();
-      // settori dei commissari in giallo
-      const yel = yellowSectors();
-      if (yel.size && mapData.marshal_sectors?.length) {
-        const idx = mapData.marshal_sectors.map((m) => { const [mx, my] = R([m.x, m.y]); let best = 0, bd = Infinity; pts.forEach(([x, y], i) => { const d = (x - mx) ** 2 + (y - my) ** 2; if (d < bd) { bd = d; best = i; } }); return [m.n, best]; });
-        ctx.strokeStyle = "#f5c518"; ctx.lineWidth = 8;
-        idx.forEach(([n, start], k) => {
-          if (!yel.has(n)) return;
-          const end = idx[(k + 1) % idx.length][1];
-          ctx.beginPath();
-          let i = start, first = true;
-          do { const [x, y] = P(pts[i]); first ? ctx.moveTo(x, y) : ctx.lineTo(x, y); first = false; i = (i + 1) % pts.length; } while (i !== end);
-          ctx.stroke();
-        });
-      }
-      ctx.fillStyle = "#8b93a1"; ctx.font = "10px monospace";
-      for (const c of mapData.corners) { const [x, y] = P(R([c.x, c.y])); const a = (c.angle + (mapData.rotation || 0)) * Math.PI / 180; ctx.fillText(c.n, x + 14 * Math.cos(a) - 3, y - 14 * Math.sin(a) + 3); }
-      $("#map-hint").textContent = yel.size ? `bandiera gialla nei settori ${[...yel].join(", ")}` : "";
+      // pista, curve e traguardo cambiano di rado: si disegnano su un livello a parte e si ricopiano
+      const key = [mapPath, mapRev, W, H, dpr, track, [...yel].join(",")].join("|");
+      if (key !== mapLayerKey) { mapLayerKey = key; mapLayer = drawTrackLayer(W, H, dpr, pts, P, R, yel, track); }
+      ctx.drawImage(mapLayer, 0, 0, W, H);
+      hint = yel.size ? `gialla nei settori ${[...yel].join(", ")}` : "";
     } else {
       ctx.fillStyle = "#2c323b"; for (const p of pts) { const [x, y] = P(p); ctx.fillRect(x - 1, y - 1, 2, 2); }
-      $("#map-hint").textContent = "tracciato ricostruito dai GPS";
+      hint = "tracciato ricostruito dai GPS";
     }
     // GPS vero se arriva (replay), altrimenti posizione stimata dai minisettori (diretta)
-    const gps = Object.keys(lastPos).length > 0, estimate = !gps && !!mapData;
-    if (estimate) {  // si aggiunge all'eventuale avviso di bandiera gialla, riscritto a ogni disegno
-      const h = $("#map-hint"), src = mapData.seg_points?.source;
-      h.textContent = (h.textContent ? h.textContent + " · " : "")
-        + (src ? `posizioni stimate dai minisettori, calibrate su ${src}` : "posizioni stimate a grandi linee dai minisettori")
-        + ": in diretta la F1 non manda il GPS";
+    const gps = !forceEstimate && Object.keys(lastPos).length > 0, estimate = !gps && !!mapData;
+    if (estimate) {
+      const src = mapData.seg_points?.source;
+      hint = (hint ? hint + " · " : "") + (src ? `posizioni stimate (calibrate su ${src})` : "posizioni stimate dai minisettori");
     }
-    // sigle: prima seguito e preferiti, poi le altre solo dove non si sovrappongono
-    const labels = [];
-    const order = [...state.drivers].sort((a, b) => (b.num === prefs.follow) - (a.num === prefs.follow) || isFav(b.num) - isFav(a.num));
-    for (const d of order) {
-      let raw;
+    const cars = [], box = [];
+    for (const d of state.drivers) {
+      let at = null;
       if (gps) {
-        const p = lastPos[d.num]; if (!p || d.retired || p.status !== "OnTrack") continue;
-        raw = [p.x, p.y];
+        const p = lastPos[d.num];
+        if (!p || d.retired || p.status !== "OnTrack") { delete carVis[d.num]; if (p && d.inpit && !d.retired) box.push(d); continue; }
+        // GPS a scatti (circa 4 al secondo): la macchina va verso l'ultimo punto senza saltare
+        const v = carVis[d.num];
+        if (!v || v.x == null || Math.hypot(p.x - v.x, p.y - v.y) > 2000) carVis[d.num] = { x: p.x, y: p.y };
+        else { v.x += (p.x - v.x) * LERP; v.y += (p.y - v.y) * LERP; }
+        at = [carVis[d.num].x, carVis[d.num].y];
       } else if (estimate) {
-        if (d.retired || d.stopped || d.inpit) continue;
-        raw = estimatedPoint(d); if (!raw) continue;
+        if (d.retired || d.stopped) { delete carVis[d.num]; continue; }
+        if (d.inpit) { delete carVis[d.num]; box.push(d); continue; }
+        const raw = estimatedPoint(d); if (!raw) continue;
+        const v = carVis[d.num], t = fracOf(raw, v?.i);
+        if (!v || v.u == null) carVis[d.num] = { u: t.u, i: t.i };
+        else {
+          let delta = t.u - (((v.u % 1) + 1) % 1);
+          if (delta > .5) delta -= 1; if (delta < -.5) delta += 1;
+          if (Math.abs(delta) > .15) v.u = t.u;                       // salto vero (rientro, riaggancio): si va lì
+          else if (delta > 0) v.u += delta * LERP;                    // avanti a piccoli passi
+          // un passo indietro piccolo è rumore della stima: la macchina resta dov'è
+          v.i = t.i;
+        }
+        at = pointAt(carVis[d.num].u);
       } else continue;
-      const [x, y] = P(R(raw)), hi = d.num === prefs.follow, fav = isFav(d.num);
-      ctx.beginPath(); ctx.arc(x, y, hi ? 8 : fav ? 6.5 : 5, 0, Math.PI * 2); ctx.fillStyle = d.colour;
-      ctx.globalAlpha = estimate ? 0.85 : 1; ctx.fill(); ctx.globalAlpha = 1;
-      if (hi || fav) { ctx.strokeStyle = hi ? "#fff" : "#3b82f6"; ctx.lineWidth = 2; ctx.stroke(); }
-      if (hi || fav || labels.every(([lx, ly]) => Math.abs(lx - x) > 30 || Math.abs(ly - y) > 13)) {
-        ctx.fillStyle = "#e8eaed"; ctx.font = `${hi ? "bold 12px" : "11px"} monospace`; ctx.fillText(d.tla, x + 9, y + 4);
-        labels.push([x, y]);
-      }
+      const [x, y] = P(R(at));
+      cars.push({ d, x, y, hi: d.num === prefs.follow, fav: isFav(d.num) });
     }
+    // pallini: prima gli altri, sopra i preferiti e il pilota seguito
+    cars.sort((a, b) => (a.hi - b.hi) || (a.fav - b.fav) || ((b.d.pos || 99) - (a.d.pos || 99)));
+    for (const c of cars) {
+      const r = c.hi ? 8.5 : c.fav ? 7.5 : 6.5;
+      ctx.beginPath(); ctx.arc(c.x, c.y, r + 2, 0, Math.PI * 2); ctx.fillStyle = "#07090c"; ctx.fill();
+      ctx.beginPath(); ctx.arc(c.x, c.y, r, 0, Math.PI * 2); ctx.fillStyle = c.d.colour; ctx.fill();
+      if (c.hi || c.fav) { ctx.lineWidth = 2; ctx.strokeStyle = c.hi ? "#fff" : "#4d94ff"; ctx.stroke(); }
+    }
+    // sigle con posizione, verso l'esterno della pista; seguito e preferiti per primi, poi dove c'è spazio
+    const placed = [];
+    ctx.font = "700 11px " + getComputedStyle(document.documentElement).getPropertyValue("--mono");
+    for (const c of [...cars].reverse()) {
+      const txt = `${c.d.pos ?? ""} ${c.d.tla}`.trim(), w = ctx.measureText(txt).width + 12, h = 17;
+      let dx = c.x - tcx, dy = c.y - tcy; const l = Math.hypot(dx, dy) || 1; dx /= l; dy /= l;
+      let bx = c.x + dx * 14 - (dx < 0 ? w : 0), by = c.y + dy * 14 - h / 2;
+      bx = Math.max(2, Math.min(W - w - 2, bx)); by = Math.max(2, Math.min(H - h - 2, by));
+      const free = placed.every(([px, py, pw, ph]) => bx + w < px || bx > px + pw || by + h < py || by > py + ph);
+      if (!(c.hi || c.fav || free)) continue;
+      placed.push([bx, by, w, h]);
+      ctx.fillStyle = c.hi ? "rgba(255,255,255,.95)" : "rgba(11,14,19,.9)";
+      ctx.beginPath(); ctx.roundRect(bx, by, w, h, 4); ctx.fill();
+      ctx.fillStyle = c.d.colour; ctx.fillRect(bx, by + 3, 3, h - 6);
+      ctx.fillStyle = c.hi ? "#07090c" : "#eef1f5"; ctx.textBaseline = "middle"; ctx.fillText(txt, bx + 7, by + h / 2 + .5);
+    }
+    if (box.length) {
+      ctx.font = "600 11px " + getComputedStyle(document.documentElement).getPropertyValue("--mono");
+      ctx.fillStyle = "#7d8694"; ctx.textBaseline = "alphabetic";
+      ctx.fillText("AI BOX  " + box.map((d) => d.tla).join(" · "), 12, H - 12);
+    }
+    setHint(hint);
+  }
+  /** Livello fisso: bordo e asfalto, settori in giallo, numeri delle curve, traguardo. */
+  function drawTrackLayer(W, H, dpr, pts, P, R, yel, track) {
+    const off = document.createElement("canvas"); off.width = Math.round(W * dpr); off.height = Math.round(H * dpr);
+    const c = off.getContext("2d"); c.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const path = (from, to) => { c.beginPath(); let i = from, first = true; do { const [x, y] = P(pts[i]); first ? c.moveTo(x, y) : c.lineTo(x, y); first = false; i = (i + 1) % pts.length; } while (i !== to); };
+    const whole = () => { c.beginPath(); pts.forEach((p, i) => { const [x, y] = P(p); i ? c.lineTo(x, y) : c.moveTo(x, y); }); c.closePath(); };
+    c.lineJoin = c.lineCap = "round";
+    // tutta la pista si colora con rossa e safety car, come in TV
+    const asphalt = track === "red" ? "#5a1a1d" : (track === "sc" || track === "vsc" || track === "vsc_ending") ? "#5a4a12" : "#2a303a";
+    whole(); c.lineWidth = 15; c.strokeStyle = "#040507"; c.stroke();
+    whole(); c.lineWidth = 9; c.strokeStyle = asphalt; c.stroke();
+    if (yel.size && mapData.marshal_sectors?.length) {
+      const idx = mapData.marshal_sectors.map((m) => { const [mx, my] = R([m.x, m.y]); let best = 0, bd = Infinity; pts.forEach(([x, y], i) => { const d = (x - mx) ** 2 + (y - my) ** 2; if (d < bd) { bd = d; best = i; } }); return [m.n, best]; });
+      c.strokeStyle = "#ffd426"; c.lineWidth = 9;
+      idx.forEach(([n, start], k) => { if (yel.has(n)) { path(start, idx[(k + 1) % idx.length][1]); c.stroke(); } });
+    }
+    // traguardo: trattino a scacchi di traverso alla pista, all'inizio del giro
+    const { order } = getTrackModel();
+    const [ax, ay] = P(R(order[0])), [bx, by] = P(R(order[Math.min(3, order.length - 1)]));
+    const ang = Math.atan2(by - ay, bx - ax);
+    c.save(); c.translate(ax, ay); c.rotate(ang);
+    for (let k = 0; k < 4; k++) for (let j = 0; j < 2; j++) { c.fillStyle = (k + j) % 2 ? "#0b0e13" : "#f5f5f5"; c.fillRect(-3 + j * 3, -9 + k * 4.5, 3, 4.5); }
+    c.restore();
+    c.fillStyle = "#5d6571"; c.font = "600 10px " + getComputedStyle(document.documentElement).getPropertyValue("--mono"); c.textAlign = "center"; c.textBaseline = "middle";
+    for (const k of mapData.corners) { const [x, y] = P(R([k.x, k.y])); const a = (k.angle + (mapData.rotation || 0)) * Math.PI / 180; c.fillText(k.n, x + 17 * Math.cos(a), y - 17 * Math.sin(a)); }
+    return off;
   }
 
   // ------------------------------------------------------------ controlli
