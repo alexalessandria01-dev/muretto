@@ -371,9 +371,20 @@ async def index(_request):
     return web.FileResponse(WEB_DIR / "index.html")
 
 
+@web.middleware
+async def no_stale_page(request, handler):
+    """Pagina, stile e codice: il browser deve sempre chiedere se sono cambiati. Senza, dopo un
+    aggiornamento Chrome mescolava la pagina vecchia in memoria col codice nuovo (tabellone vuoto).
+    Risponde 304 quando non è cambiato niente, quindi non costa nulla."""
+    resp = await handler(request)
+    if request.path == "/" or (request.path.startswith("/web/") and not request.path.startswith("/web/vendor/")):
+        resp.headers["Cache-Control"] = "no-cache"
+    return resp
+
+
 def make_app(feed) -> web.Application:
     hub = Hub(feed)
-    app = web.Application()
+    app = web.Application(middlewares=[no_stale_page])
     app["hub"] = hub
     app.router.add_get("/", index)
     app.router.add_get("/ws", hub.ws_handler)
