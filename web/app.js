@@ -1156,11 +1156,18 @@
     // con safety car e VSC si va molto più piano: il ritmo scende subito, senza aspettare i minisettori
     const slow = /^(sc|vsc|vsc_ending)$/.test(state.session.track) ? 1.45 : 0;
     const durS = ch.dur[m.k] ? ch.dur[m.k] * Math.max(m.pace, slow) : (lapS || 100) / s.n;
-    // avanza col tempo; oltre l'85% rallenta dolcemente invece di fermarsi di colpo al bordo
+    // avanza col tempo. Arrivata al bordo del minisettore non si ferma: il dato della F1 arriva spesso
+    // in ritardo e la macchina è quasi sicuramente già nel tratto dopo. Continua lì, rallentando
+    // dolcemente, fino a un terzo del tratto successivo (prima si fermava e ripartiva: "scatta")
+    const nb = m.k + 1 < s.n ? ch.start[m.k + 2] : m.k + 1 === s.n ? 1 + ch.start[1] : b + (b - a);
+    const span = Math.max(0, b - a), nspan = Math.max(0, nb - b);
     let f = m.known ? (now - m.t0) / durS : .5;
-    if (f > .85) f = .85 + .14 * (1 - Math.exp(-(f - .85) / .14));
-    m.spd = Math.max(0, b - a) / durS;   // giri al secondo, per il movimento con inerzia
-    return m.lap + a + Math.max(0, b - a) * f;
+    m.spd = span / durS;   // giri al secondo, per il movimento con inerzia
+    if (f <= .9) return m.lap + a + span * f;
+    const over = 1.6 * (1 - Math.exp(-(f - .9) / 1.6));   // 0 → 1,6 "durate" in più, sempre più piano
+    const pos = .9 + over;                                  // oltre 1 si entra nel tratto dopo
+    if (pos <= 1) return m.lap + a + span * pos;
+    return m.lap + b + Math.min(nspan / 3, nspan * (pos - 1));
   }
 
   // ------------------------------------------------------------ mappa
@@ -1261,7 +1268,10 @@
           // movimento con inerzia: la velocità voluta è quella prevista più un recupero proporzionale
           // al distacco dalla stima; la velocità vera ci arriva per gradi, così niente frenate e
           // ripartenze di colpo. Mai all'indietro.
-          const spd = motion[d.num]?.spd || 0, want = Math.max(0, Math.min(spd * 1.5 + .001, spd + (t - v.u) * 1.2));
+          // se la pallina è avanti rallenta ma non si ferma (al 35% del passo), salvo che sia avanti di
+          // parecchio: lì quasi si ferma ad aspettare
+          const spd = motion[d.num]?.spd || 0, err = t - v.u, floor = err > -.03 ? spd * .35 : spd * .1;
+          const want = Math.max(floor, Math.min(spd * 1.5 + .001, spd + err * 1.2));
           v.vel += (want - v.vel) * Math.min(1, frameDt * 3);
           v.u += Math.max(0, v.vel) * frameDt;
         }
