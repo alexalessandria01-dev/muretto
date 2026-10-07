@@ -1152,7 +1152,7 @@
         m.pace = Math.max(.85, .6 * m.pace + .4 * r);   // mai molto più veloce di quanto imparato
         // i tempi suoi, in questa gara, minisettore per minisettore (idea di Alex): veloce sul dritto,
         // lento in curva. Mediati sui giri; con SC/VSC non si imparano (sono fuori ritmo)
-        const own = m.own[m.k];
+        const own = d.own?.[m.k] ?? m.own[m.k];   // quelli del server (da inizio sessione) prima dei nostri
         if (own) m.rel = Math.max(.8, Math.min(2.5, .6 * m.rel + .4 * Math.max(.6, Math.min(3, obs / own))));
         if (!slowTrack() && obs > ch.dur[m.k] * .5 && obs < ch.dur[m.k] * 2.5) m.own[m.k] = own ? .6 * own + .4 * obs : obs;
       }
@@ -1168,7 +1168,8 @@
     const slow = slowTrack() ? 1.45 : 0;
     // dal secondo giro i tempi suoi di questo minisettore, corretti col ritmo degli ultimi tratti;
     // prima (o se mancano) quelli imparati dall'altra sessione riportati al suo passo
-    const durS = m.own[m.k] ? m.own[m.k] * Math.max(m.rel, slow) : ch.dur[m.k] ? ch.dur[m.k] * Math.max(m.pace, slow) : (lapS || 100) / s.n;
+    const ownK = d.own?.[m.k] ?? m.own[m.k];
+    const durS = ownK ? ownK * Math.max(m.rel, slow) : ch.dur[m.k] ? ch.dur[m.k] * Math.max(m.pace, slow) : (lapS || 100) / s.n;
     // avanza col tempo. Arrivata al bordo del minisettore non si ferma: il dato della F1 arriva spesso
     // in ritardo e la macchina è quasi sicuramente già nel tratto dopo. Continua lì, rallentando
     // dolcemente, fino a un terzo del tratto successivo (prima si fermava e ripartiva: "scatta")

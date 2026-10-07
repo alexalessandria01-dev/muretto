@@ -153,3 +153,21 @@ def test_seg_age_settori_come_lista_o_dizionario():
     st.apply("TimingData", {"Lines": {"4": {"Sectors": {"0": {"Segments": {"1": {"Status": 2048}}}}}}}, 12.0)
     st.apply("TimingData", {"Lines": {"1": {"GapToLeader": "+1.0"}}}, 13.0)
     assert st._seg_ts == {"1": 10.0, "4": 12.0}
+
+
+def test_tempi_propri_per_minisettore():
+    """Il server impara quanto ci mette ogni pilota in ogni minisettore (media sui giri),
+    e non impara con la safety car."""
+    from muretto.state import RaceState
+    st = RaceState()
+    st.apply("DriverList", {"1": {"Tla": "VER", "TeamColour": "3671C6", "RacingNumber": "1"}}, 0.0)
+    seg = lambda i: {"Lines": {"1": {"Sectors": {"0": {"Segments": {str(i): {"Status": 2048}}}}}}}
+    st.apply("TimingData", {"Lines": {"1": {"Sectors": [{"Segments": [{"Status": 0} for _ in range(3)]}]}}}, 0.0)
+    st.apply("TimingData", seg(0), 10.0)   # entra nello stato 1
+    st.apply("TimingData", seg(1), 14.0)   # stato 1 durato 4 s
+    assert st._own["1"] == {1: 4.0}
+    st.apply("TrackStatus", {"Status": "4"}, 15.0)
+    st.apply("TimingData", seg(2), 30.0)   # con la safety car non si impara
+    assert st._own["1"] == {1: 4.0}
+    row = next(d for d in st.snapshot()["drivers"] if d["num"] == "1")
+    assert row["own"] == {"1": 4.0}

@@ -90,6 +90,8 @@ class RaceState:
         self._pit_flag: dict[str, bool] = defaultdict(bool)
         self._lap_start: dict[str, float] = {}
         self._seg_ts: dict[str, float] = {}   # quando sono cambiati i minisettori di ogni pilota
+        self._kstate: dict[str, tuple[int, float | None]] = {}   # minisettore attuale e da quando
+        self._own: dict[str, dict[int, float]] = {}       # tempi propri per minisettore
         self.replay_position: float | None = None
         self.circuit_info: dict = {}  # da MultiViewer: pit_loss {normal, sc, vsc}, tracciato, curve
         self.last_ts: float = 0.0     # istante dell'ultimo messaggio, nel tempo del feed
@@ -172,6 +174,8 @@ class RaceState:
             merge(self.data.setdefault(topic, {}), data)
         else:
             self.data[topic] = data
+        if topic == "TimingData":
+            self._learn_own_times(data, ts)
 
     def _status_at(self, ts: float) -> str:
         cur = "1"
@@ -186,6 +190,39 @@ class RaceState:
         if self._status_at(t0) != "1":
             return False
         return all(s == "1" for t, s in self._status_log if t0 < t <= t1)
+
+    def _learn_own_times(self, data, ts: float):
+        """Quanto ci mette ogni pilota, in questa sessione, in ogni minisettore (media sui giri).
+
+        La pagina li usa per la mappa stimata: veloce sul dritto, lento in curva, come va lui oggi.
+        Li tiene il server dall'inizio della sessione, così una pagina appena aperta li ha subito.
+        Stessa regola di lap_state() in calibration.py: minisettori accesi di fila dall'inizio."""
+        lines = data.get("Lines") if isinstance(data, dict) else None
+        if not isinstance(lines, dict):
+            return
+        slow = str((self.data.get("TrackStatus") or {}).get("Status")) in ("4", "5", "6", "7")
+        for num in lines:
+            line = (self.data.get("TimingData", {}).get("Lines") or {}).get(num)
+            if not isinstance(line, dict):
+                continue
+            segs = [x for sec in self._sectors(line) for x in sec.get("seg", [])]
+            if not segs:
+                continue
+            k = 0
+            while k < len(segs) and segs[k]:
+                k += 1
+            prev = self._kstate.get(num)
+            if prev and prev[0] == k:
+                continue
+            # il primo stato visto non ha un inizio vero (la pagina o il replay partono a metà)
+            self._kstate[num] = (k, ts if prev else None)
+            if not prev or prev[1] is None or k != prev[0] + 1 or slow or line.get("InPit") or line.get("PitOut"):
+                continue
+            dur = ts - prev[1]
+            if 0.3 < dur < 30:
+                own = self._own.setdefault(num, {})
+                old = own.get(prev[0])
+                own[prev[0]] = round(dur if old is None else 0.6 * old + 0.4 * dur, 2)
 
     def _track_laps(self, delta: dict, ts: float):
         """Registra un giro quando NumberOfLaps aumenta; segna i giri con box o bandiere."""
@@ -583,6 +620,7 @@ class RaceState:
                 "best": best.get("Value", ""),
                 "sectors": self._sectors(line),
                 "seg_age": round(max(0.0, self.last_ts - self._seg_ts[num]), 2) if num in self._seg_ts else None,
+                "own": {str(k): v for k, v in self._own.get(num, {}).items()},
                 "compound": cur.get("compound", "UNKNOWN"),
                 "age": cur.get("laps", 0),
                 "new": cur.get("new", True),
