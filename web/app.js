@@ -17,7 +17,7 @@
     panels: store("panels", {}), metrics: store("metrics", false), autoplay: store("autoplay", true), chime: store("chime", false),
     delay: store("delay", 0), pitLoss: store("pitLoss", null), tab: store("tab", "board"),
     wallAll: store("wallAll", false), mobile: store("mobile", "auto"), rcFilter: store("rcFilter", "all"), radioFilter: store("radioFilter", "all"),
-    alerts: store("alerts", false), an: store("an", "gaps"),
+    alerts: store("alerts", false), an: store("an", "gaps"), layout: store("layout", null), tabOrder: store("tabOrder", null),
   };
   /** Pit loss in uso: quella scelta dall'utente, altrimenti quella del server (già adattata a SC/VSC). */
   const pitLossNow = () => prefs.pitLoss ?? state.pit_loss.value;
@@ -1387,6 +1387,98 @@
       b.dataset.dot = n > 0 ? String(n) : "";
     }
   }
+  // ------------------------------------------------------------ disposizione dei pannelli
+  /* Come la modifica della Home di One UI: "Disponi" mette la pagina in modifica, i pannelli si
+   * trascinano dalla maniglia (anche da una colonna all'altra), si sceglie quante colonne e quanto
+   * larghe, si nasconde un pannello con la ✕. Tutto resta salvato nel browser.
+   * Su telefono, dove si vede un pannello alla volta, si riordinano le schede in basso. */
+  const TILES = ["board", "battle", "wall", "map", "rc", "radio", "analysis"];
+  const TILE_NAME = { board: "Tabellone", battle: "Battaglia", wall: "Muretto", map: "Mappa", rc: "Direzione gara", radio: "Radio", analysis: "Analisi" };
+  const LAYOUT_DEFAULT = { cols: [["board", "map", "analysis"], ["battle", "wall", "rc", "radio"]], widths: [2, 1] };
+  const WIDTH_CHOICES = { 1: [[1]], 2: [[2, 1], [3, 2], [1, 1], [2, 3], [1, 2]], 3: [[1, 1, 1], [2, 1, 1], [1, 2, 1], [1, 1, 2]] };
+  const fracTxt = (w) => { const t = w.reduce((a, b) => a + b, 0); return w.map((x) => Math.round(x / t * 100) + "%").join(" · "); };
+  /** Ogni pannello una sola volta; quelli nuovi o persi finiscono in fondo all'ultima colonna. */
+  function normLayout(l) {
+    const cols = (Array.isArray(l?.cols) && l.cols.length >= 1 && l.cols.length <= 3 ? l.cols : LAYOUT_DEFAULT.cols).map((c) => (Array.isArray(c) ? c : []));
+    const seen = new Set(), out = cols.map((c) => c.filter((id) => TILES.includes(id) && !seen.has(id) && seen.add(id)));
+    for (const id of TILES) if (!seen.has(id)) out[out.length - 1].push(id);
+    const widths = Array.isArray(l?.widths) && l.widths.length === out.length ? l.widths : WIDTH_CHOICES[out.length][0];
+    return { cols: out, widths };
+  }
+  let layout = normLayout(prefs.layout);
+  function saveLayout() { prefs.layout = layout; save("layout", layout); }
+  /** Sposta i pannelli veri (non copie: restano i loro ascoltatori) nelle colonne. */
+  function applyLayout() {
+    const main = $("main");
+    let cols = [...main.querySelectorAll(":scope > .col")];
+    while (cols.length < layout.cols.length) { const c = document.createElement("div"); c.className = "col"; main.appendChild(c); cols.push(c); }
+    layout.cols.forEach((ids, i) => { const c = cols[i]; c.style.flex = `${layout.widths[i]} 1 0`; for (const id of ids) c.appendChild($("#" + id)); });
+    for (const c of cols.slice(layout.cols.length)) c.remove();
+    main.dataset.cols = layout.cols.length;
+  }
+  /** Dopo un trascinamento: si legge l'ordine dalla pagina. */
+  function readLayout() {
+    layout.cols = [...$("main").querySelectorAll(":scope > .col")].map((c) => [...c.children].map((el) => el.id).filter((id) => TILES.includes(id)));
+    saveLayout(); relayoutCharts();
+  }
+  function relayoutCharts() { chartKey = ""; gapKey = ""; lapKey = ""; cmpKey = ""; mapLayerKey = ""; if (state) render(); }
+  function setCols(n) {
+    const all = layout.cols.flat(), cur = layout.cols.map((c) => [...c]);
+    if (n === 1) layout.cols = [all];
+    else if (n > cur.length) {   // colonne nuove: si prendono i pannelli dal fondo della colonna più lunga
+      while (cur.length < n) { const longest = cur.reduce((a, b) => (b.length > a.length ? b : a)); cur.push(longest.splice(Math.ceil(longest.length / 2))); }
+      layout.cols = cur;
+    } else { while (cur.length > n) { const last = cur.pop(); cur[cur.length - 1].push(...last); } layout.cols = cur; }
+    layout.widths = WIDTH_CHOICES[n][0];
+    saveLayout(); applyLayout(); if (document.body.classList.contains("editing")) startSorting(); renderLayoutBar(); relayoutCharts();
+  }
+  /** Il pannello si può spegnere? (Analisi conta come spento se lo sono tutte le sue schede.) */
+  const tileOn = (id) => (id === "analysis" ? AN.some((a) => panelOn(a)) : panelOn(id));
+  function setTile(id, on) {
+    for (const p of id === "analysis" ? AN : [id]) prefs.panels[p] = on;
+    save("panels", prefs.panels); relayoutCharts(); renderLayoutBar(); decorateTiles();
+  }
+  function renderLayoutBar() {
+    for (const b of $("#lb-cols").querySelectorAll("button")) b.classList.toggle("on", +b.dataset.cols === layout.cols.length);
+    const wl = $("#lb-widths"), n = layout.cols.length;
+    wl.hidden = n === 1;
+    wl.innerHTML = '<span class="k">Larghezze</span>' + WIDTH_CHOICES[n].map((w, i) => `<button data-w="${i}" class="${w.join() === layout.widths.join() ? "on" : ""}">${fracTxt(w)}</button>`).join("");
+    const off = TILES.filter((id) => id !== "board" && !tileOn(id));
+    $("#lb-hidden").innerHTML = off.length ? '<span class="k">Nascosti</span>' + off.map((id) => `<button data-show="${id}">+ ${TILE_NAME[id]}</button>`).join("") : "";
+  }
+  /** In modifica ogni pannello ha in cima la maniglia col nome e la ✕. */
+  function decorateTiles() {
+    const on = document.body.classList.contains("editing");
+    for (const id of TILES) {
+      const el = $("#" + id); let bar = el.querySelector(":scope > .tile-edit");
+      if (!on) { bar?.remove(); continue; }
+      if (!bar) { bar = document.createElement("div"); bar.className = "tile-edit"; bar.innerHTML = `<span class="grip" aria-hidden="true">⠿</span><span class="tile-name">${TILE_NAME[id]}</span>${id === "board" ? "" : `<button type="button" class="tile-x" data-hide="${id}" aria-label="Nascondi ${TILE_NAME[id]}">✕</button>`}`; el.prepend(bar); }
+    }
+  }
+  let sortables = [];
+  function startSorting() {
+    sortables.forEach((x) => x.destroy()); sortables = [];
+    if (!document.body.classList.contains("editing") || typeof Sortable === "undefined") return;
+    if (isMobile()) {
+      sortables.push(Sortable.create($("#tabbar"), { forceFallback: true, animation: 160, delay: 120, delayOnTouchOnly: true, onEnd: () => { prefs.tabOrder = [...$("#tabbar").children].map((b) => b.dataset.tab); save("tabOrder", prefs.tabOrder); } }));
+      return;
+    }
+    for (const c of $("main").querySelectorAll(":scope > .col"))
+      sortables.push(Sortable.create(c, { group: "tiles", handle: ".tile-edit", forceFallback: true, fallbackOnBody: true, animation: 180, ghostClass: "tile-ghost", chosenClass: "tile-chosen", emptyInsertThreshold: 40, onEnd: readLayout }));
+  }
+  function setEditing(on) {
+    document.body.classList.toggle("editing", on);
+    $("#layout-bar").hidden = !on;
+    $("#layout-btn").classList.toggle("on", on);
+    if (on) { setSettings(false); renderLayoutBar(); }
+    decorateTiles(); startSorting();
+    if (!on) relayoutCharts();
+  }
+  function applyTabOrder() {
+    const bar = $("#tabbar"), order = prefs.tabOrder; if (!Array.isArray(order)) return;
+    for (const t of order) { const b = bar.querySelector(`[data-tab="${t}"]`); if (b) bar.appendChild(b); }
+  }
+
   /** Schede di Analisi: nascoste quelle dei pannelli spenti, attiva l'ultima scelta (o la prima rimasta). */
   const AN = ["gaps", "telemetry", "perf", "champ", "cmp"];
   function renderAnTabs() {
@@ -1447,6 +1539,14 @@
   $("#settings-close").addEventListener("click", () => setSettings(false));
   $("#settings-veil").addEventListener("click", () => setSettings(false));
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && document.body.classList.contains("settings-open")) setSettings(false); });
+  $("#layout-btn").addEventListener("click", () => setEditing(!document.body.classList.contains("editing")));
+  $("#lb-done").addEventListener("click", () => setEditing(false));
+  $("#lb-reset").addEventListener("click", () => { layout = normLayout(null); prefs.tabOrder = null; save("tabOrder", null); saveLayout(); applyLayout(); applyTabOrder(); for (const id of TILES) for (const p of id === "analysis" ? AN : [id]) prefs.panels[p] = true; save("panels", prefs.panels); setEditing(true); relayoutCharts(); });
+  $("#lb-cols").addEventListener("click", (e) => { const b = e.target.closest("button[data-cols]"); if (b) setCols(+b.dataset.cols); });
+  $("#lb-widths").addEventListener("click", (e) => { const b = e.target.closest("button[data-w]"); if (!b) return; layout.widths = WIDTH_CHOICES[layout.cols.length][+b.dataset.w]; saveLayout(); applyLayout(); renderLayoutBar(); relayoutCharts(); });
+  $("#lb-hidden").addEventListener("click", (e) => { const b = e.target.closest("button[data-show]"); if (b) setTile(b.dataset.show, true); });
+  $("main").addEventListener("click", (e) => { const b = e.target.closest(".tile-x"); if (b) { e.stopPropagation(); setTile(b.dataset.hide, false); } });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && document.body.classList.contains("editing")) setEditing(false); });
   // Analisi (computer): una scheda alla volta
   $("#an-tabs").addEventListener("click", (e) => {
     const b = e.target.closest("button[data-an]"); if (!b) return;
@@ -1460,6 +1560,8 @@
     prefs.mobile = e.target.value; save("mobile", prefs.mobile);
     applyMobileMode(); chartKey = ""; gapKey = ""; if (state) render();
   });
+  applyLayout();
+  applyTabOrder();
   applyMobileMode();
   setTab(prefs.tab);
   alertsUi();

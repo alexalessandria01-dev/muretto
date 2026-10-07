@@ -45,6 +45,7 @@
       <button id="tv-clock-ok" type="button">OK</button>
     </span>
     <span id="tv-state" class="hint" aria-live="polite"></span>
+    <button id="layout-btn" type="button" title="Disponi i pannelli come vuoi"><span class="gear" aria-hidden="true">✥</span><span class="lbl">Disponi</span></button>
     <button id="settings-toggle" type="button" aria-expanded="false" aria-controls="settings" title="Impostazioni"><span class="gear" aria-hidden="true">⚙</span><span class="lbl">Impostazioni</span></button>
   </div>
   <div id="conn" class="dot" title="connessione"></div>
@@ -52,6 +53,16 @@
 
 <!-- Ultimo messaggio della direzione gara: resta in vista qualunque pannello si stia guardando. -->
 <div id="stale" role="status" hidden></div>
+
+<!-- Modalità "Disponi": come la modifica della schermata Home di One UI -->
+<div id="layout-bar" hidden>
+  <span class="lb-tip">Trascina i pannelli dalla maniglia <b>⠿</b> · ✕ per nasconderli</span>
+  <span class="lb-group" id="lb-cols"><span class="k">Colonne</span><button data-cols="1">1</button><button data-cols="2">2</button><button data-cols="3">3</button></span>
+  <span class="lb-group" id="lb-widths"><span class="k">Larghezze</span></span>
+  <span class="lb-group" id="lb-hidden"></span>
+  <button id="lb-reset" type="button">Ripristina</button>
+  <button id="lb-done" type="button" class="primary">Fatto</button>
+</div>
 
 <button id="rc-ticker" type="button" hidden>
   <span class="rc-tag">Direzione gara</span>
@@ -125,7 +136,6 @@
     </table>
   </section>
 
-  <aside id="side">
     <section class="panel" id="battle">
       <div class="panel-head"><h2>Battaglia</h2><span class="hint" id="battle-hint"></span></div>
       <div id="battle-body"></div>
@@ -140,7 +150,6 @@
       <div id="wall-cards"></div>
     </section>
 
-  </aside>
 
   <section class="panel" id="map">
     <div class="panel-head"><h2>Mappa</h2><span class="hint" id="map-hint"></span></div>
@@ -254,6 +263,7 @@
 <video id="nosleep" src="/web/vendor/nosleep.mp4" muted playsinline loop preload="auto"></video>
 
 <script src="/web/vendor/uPlot.iife.min.js"></script>
+<script src="/web/vendor/Sortable.min.js"></script>
 <script src="/web/app.js"></script>
 </body>
 </html>

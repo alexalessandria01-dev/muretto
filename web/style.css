@@ -108,20 +108,14 @@ select:focus-visible, input:focus-visible, button:focus-visible { outline: 2px s
 input[type=number] { width: 66px; font-family: var(--mono); font-variant-numeric: tabular-nums; }
 .hint { font-size: 11px; color: var(--muted); }
 
-/* ---------- layout: prima il tabellone con battaglia e muretto, poi mappa grande con direzione gara
-   e radio accanto, infine l'Analisi a schede (una alla volta) */
-main {
-  display: grid; gap: var(--gap); margin-top: var(--gap);
-  grid-template-columns: minmax(0, 1fr) clamp(340px, 31vw, 470px);
-  grid-template-areas: "board side" "map rc" "map radio" "an an";
-  grid-template-rows: auto auto 1fr auto;
+/* ---------- layout: colonne che si dispongono come si vuole (pulsante "Disponi") */
+main { display: flex; align-items: flex-start; gap: var(--gap); margin-top: var(--gap); }
+main > .col { display: flex; flex-direction: column; gap: var(--gap); min-width: 0; }
+#analysis { min-width: 0; }
+@media (max-width: 1100px) {
+  main { flex-wrap: wrap; }
+  main > .col { flex: 1 1 100% !important; }
 }
-#board { grid-area: board; }
-#side { grid-area: side; display: flex; flex-direction: column; gap: var(--gap); min-width: 0; }
-#map { grid-area: map; align-self: start; }
-#radio { grid-area: radio; min-height: 0; }
-#rc { grid-area: rc; }
-#analysis { grid-area: an; min-width: 0; }
 #analysis > .panel { display: none; border-top-left-radius: 0; border-top-right-radius: 0; }
 #analysis > .panel.an-active { display: block; }
 #analysis > .panel[hidden] { display: none !important; }
@@ -411,7 +405,7 @@ body.m #hero { display: block; margin-top: 12px; }
 
 /* un pannello alla volta, scelto dalle schede in basso */
 body.m main { display: block; margin-top: 12px; }
-body.m #side { display: contents; }
+body.m main > .col { display: contents; }
 body.m #analysis { display: contents; }
 body.m #an-tabs { display: none; }
 body.m #analysis > .panel { border-radius: var(--r-sm); display: none; }
@@ -635,3 +629,42 @@ body.m.race td.col-gap .i .drs1 { display: block; font-style: normal; font-size:
 #f1tv ol { margin: 6px 0; padding-left: 18px; }
 #f1tv .f1tv-row { display: flex; gap: 6px; flex-wrap: wrap; }
 #f1tv input { flex: 1 1 220px; min-width: 0; }
+
+/* ---------- modalità "Disponi" (come la modifica della Home di One UI) */
+#layout-btn { display: inline-flex; align-items: center; gap: 7px; }
+#layout-btn.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+#layout-bar {
+  position: sticky; top: 0; z-index: 40; display: flex; align-items: center; flex-wrap: wrap; gap: 10px 16px;
+  margin-top: 10px; padding: 10px 14px; border-radius: var(--r-sm);
+  background: var(--panel-2); border: 1px solid var(--accent); font-size: 13px;
+}
+#layout-bar .lb-tip { color: var(--muted); margin-right: auto; }
+#layout-bar .lb-group { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+#layout-bar .lb-group:empty { display: none; }
+#layout-bar .lb-group .k { margin-right: 2px; }
+#layout-bar button { padding: 5px 11px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); font-size: 12px; font-weight: 600; }
+#layout-bar button:hover { color: var(--text); }
+#layout-bar button.on { color: var(--text); border-color: var(--text); }
+#layout-bar button.primary { background: var(--accent); border-color: var(--accent); color: #fff; padding: 6px 16px; }
+body.editing main > .col { min-height: 120px; padding: 6px; margin: -6px; border-radius: var(--r); outline: 1px dashed var(--line); }
+@keyframes wiggle { from { transform: rotate(-.25deg); } to { transform: rotate(.25deg); } }
+.tile-edit {
+  display: flex; align-items: center; gap: 10px; margin: -6px -6px 12px; padding: 8px 10px;
+  border-radius: var(--r-sm); background: var(--panel-2); border: 1px solid var(--line); cursor: grab; user-select: none;
+}
+#analysis > .tile-edit { margin: 0 0 8px; }
+.tile-edit:active { cursor: grabbing; }
+.tile-edit .grip { font-size: 18px; line-height: 1; color: var(--muted); }
+.tile-edit .tile-name { font-weight: 700; font-size: 13px; }
+.tile-edit .tile-x { margin-left: auto; width: 26px; height: 26px; border-radius: 50%; color: var(--muted); }
+.tile-edit .tile-x:hover { background: var(--accent); color: #fff; }
+.tile-ghost { opacity: .35; outline: 2px dashed var(--accent); }
+.tile-chosen { box-shadow: 0 18px 40px -12px rgba(0, 0, 0, .8); }
+body.editing #map canvas, body.editing .charts, body.editing #chart-gaps { pointer-events: none; }
+/* telefono: in modifica si riordinano le schede in basso */
+body.m.editing #tabbar { outline: 2px dashed var(--accent); outline-offset: -2px; }
+body.m.editing #tabbar button { animation: wiggle .9s ease-in-out infinite alternate; }
+body.m #layout-bar .lb-tip::after { content: " · su telefono: trascina le schede in basso"; }
+body.m #lb-cols, body.m #lb-widths, body.m #layout-bar #lb-hidden { display: none; }
+body.m .tile-edit { display: none; }
+@media (prefers-reduced-motion: reduce) { body.m.editing #tabbar button { animation: none; } }
