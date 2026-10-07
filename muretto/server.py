@@ -108,8 +108,9 @@ class Hub:
         except Exception as e:  # noqa: BLE001
             log.warning("MultiViewer non raggiungibile (%s): uso la tabella pit loss e la mappa dai GPS", e)
             return
-        # in diretta il GPS non arriva: si impara dove stanno le macchine da una sessione già finita
-        if not isinstance(self.feed, ArchiveFeed) and self.state.circuit_info.get("map", {}).get("x"):
+        # in diretta il GPS non arriva: si impara dove stanno le macchine da una sessione già finita.
+        # Anche nel replay, così con ?nogps la pagina mostra la stima come la si vedrà in diretta
+        if self.state.circuit_info.get("map", {}).get("x"):
             asyncio.create_task(self._calibrate(key, year, self._circuit_path or ""))
 
     async def _calibrate(self, key: int, year: int, path: str):

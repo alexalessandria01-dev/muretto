@@ -1057,25 +1057,98 @@
     while (k < segs.length && segs[k]) k++;
     return { k, n: segs.length };
   }
-  /** Quando ogni macchina è entrata nello stato attuale (orologio della pagina). */
-  const stateSince = {};
-  /** Punto a una frazione `f` (0–1) di una spezzata. */
-  function along(path, f) {
-    const x = f * (path.length - 1), i = Math.floor(x), t = x - i, a = path[i], b = path[Math.min(i + 1, path.length - 1)];
-    return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+  /** Gli stati del giro (quanti minisettori accesi di fila) come tratti di pista, in giri:
+   *  `start[k]` è dove comincia lo stato k, `dur[k]` quanto dura di solito (secondi).
+   *  Con la calibrazione i punti imparati si proiettano sulla pista uno dopo l'altro, cercando
+   *  solo poco più avanti del precedente: così i tratti paralleli (Baku, Singapore) non si
+   *  scambiano e la catena non torna mai indietro. Senza calibrazione: tratti uguali. */
+  let chain = null;
+  function stateChain(n, counts) {
+    const cal = mapData.seg_points, ckey = counts.join("-");
+    if (chain && chain.map === mapData && chain.cal === cal && chain.key === ckey) return chain;
+    const { order, cum, total } = getTrackModel(), N = order.length;
+    let start = Array.from({ length: n + 1 }, (_, k) => k / n), dur = new Array(n + 1).fill(null);
+    if (cal?.n && cal.states?.length) {
+      const nc = cal.n;
+      const nearAhead = ([x, y], from) => {   // indice non avvolto, tra poco dietro e un terzo di giro avanti
+        let best = from, bd = Infinity;
+        for (let i = from - Math.round(N * .03); i <= from + Math.round(N * .33); i++) {
+          const [px, py] = order[((i % N) + N) % N], d = (px - x) ** 2 + (py - y) ** 2;
+          if (d < bd) { bd = d; best = i; }
+        }
+        return best;
+      };
+      const idx = new Array(nc + 1).fill(null), cdur = new Array(nc + 1).fill(null);
+      let at = -Math.round(N * .05);
+      for (let k = 0; k <= nc; k++) {
+        const st = cal.states[k], p = st?.path?.[0] || st?.point;
+        if (!p) continue;
+        at = idx[k] = Math.max(at, nearAhead(p, at));
+        cdur[k] = st.dur || null;
+      }
+      const frac = (i) => Math.floor(i / N) + cum[((i % N) + N) % N] / total;
+      const known = idx.map((v, k) => (v == null ? null : [k, frac(v)])).filter(Boolean);
+      if (known.length >= 2) {
+        // inizio di uno stato (anche "frazionario") della calibrazione: tra i due noti vicini
+        const cstart = (x) => {
+          const lo = [...known].reverse().find(([j]) => j <= x), hi = known.find(([j]) => j >= x);
+          if (!lo) return hi[1] - (hi[0] - x) / nc;
+          if (!hi) return lo[1] + (x - lo[0]) / nc;
+          return lo[0] === hi[0] ? lo[1] : lo[1] + (hi[1] - lo[1]) * (x - lo[0]) / (hi[0] - lo[0]);
+        };
+        // da uno stato della pagina a uno della calibrazione. La F1 può cambiare i minisettori da
+        // una sessione all'altra (Baku 2026: 8-10-8 in qualifica, 8-10-9 in gara): si confronta
+        // dentro lo stesso settore, oppure in proporzione se non si sa come sono divisi
+        const cc = cal.sectors, same = cc?.length === counts.length;
+        const toCal = (k) => {
+          if (nc === n) return k;
+          if (k >= n) return nc;
+          if (!same) return k * nc / n;
+          let offP = 0, offC = 0;
+          for (let s = 0; s < counts.length; s++) {
+            if (k < offP + counts[s]) return offC + (k - offP) * cc[s] / counts[s];
+            offP += counts[s]; offC += cc[s];
+          }
+          return nc;
+        };
+        start = start.map((_, k) => cstart(toCal(k)));
+        // durata: il tempo imparato tra l'inizio e la fine dello stato, anche quando cade a cavallo
+        // di due stati della calibrazione (stati senza tempo: la media degli altri)
+        const okd = cdur.filter(Boolean), avg = okd.length ? okd.reduce((a, b) => a + b) / okd.length : null;
+        const C = [0]; for (let j = 0; j <= nc; j++) C.push(C[j] + (cdur[j] || avg || 0));
+        const cdurAt = (x) => { const j = Math.min(Math.floor(x), nc); return C[j] + (x - j) * (cdur[j] || avg || 0); };
+        dur = dur.map((_, k) => { if (!avg) return null; if (k >= n) return cdur[nc] || avg; return cdurAt(toCal(k + 1)) - cdurAt(toCal(k)) || null; });
+      }
+    }
+    return (chain = { map: mapData, cal, key: ckey, start, dur });
   }
-  /** Dove disegnare una macchina senza GPS. Con la calibrazione del server (sessione già
-   *  finita sullo stesso circuito) avanza lungo il tratto dello stato col tempo passato:
-   *  a Baku errore mediano 25 m. Senza, a metà del minisettore: ~180 m. */
-  function estimatedPoint(d) {
+  /** A che punto del giro (in giri, che crescono sempre) dovrebbe essere una macchina senza GPS.
+   *  Come in f1-telemetry: all'ingresso in uno stato si parte dal suo inizio e si avanza col tempo
+   *  verso il successivo, fermandosi al 95% finché i minisettori non dicono che c'è arrivata. */
+  const motion = {};
+  function estimatedLaps(d, now) {
     const s = lapState(d); if (!s) return null;
-    const now = performance.now() / 1000, seen = stateSince[d.num];
-    // appena aperta la pagina non si sa da quanto c'è: meglio il punto tipico che l'inizio del tratto
-    if (!seen || seen.k !== s.k) stateSince[d.num] = { k: s.k, t: now, known: !!seen };
-    const since = stateSince[d.num], cal = mapData.seg_points, st = cal && cal.n === s.n ? cal.states[s.k] : null;
-    if (st?.path && st.dur && since.known) return along(st.path, Math.min(0.95, (now - since.t) / st.dur));
-    if (st?.point) return st.point;
-    return pointAt((s.k + 0.5) / s.n);
+    const ch = stateChain(s.n, d.sectors.map((x) => x.seg.length));
+    let m = motion[d.num];
+    if (!m) m = motion[d.num] = { k: s.k, lap: 0, t0: now, known: false, back: 0 };
+    else if (s.k !== m.k) {
+      if (s.k < m.k - s.n / 2) { m.lap++; m.k = s.k; m.t0 = now; m.known = true; m.back = 0; }   // nuovo giro
+      else if (s.k > m.k) { m.k = s.k; m.t0 = now; m.known = true; m.back = 0; }
+      // un minisettore che si spegne per un attimo è un errore del feed: si crede solo se dura 3 s
+      else if (!m.back) m.back = now;
+      else if (now - m.back > 3) { m.k = s.k; m.t0 = now; m.back = 0; }
+    } else m.back = 0;
+    // l'ultimo stato (tutti accesi) va dal traguardo-ish fino all'inizio dello stato 0 del giro dopo
+    const a = ch.start[m.k], b = m.k < s.n ? ch.start[m.k + 1] : 1 + ch.start[0];
+    const t = /(\d+):(\d+\.\d+)/.exec(d.last || ""), lapS = t ? +t[1] * 60 + +t[2] : null;
+    // i tempi imparati vengono da un'altra sessione (spesso la qualifica, più veloce): si adattano
+    // al passo del pilota col suo ultimo giro, entro limiti ragionevoli (safety car compresa)
+    const calLap = ch.dur.slice(0, s.n).reduce((a, b) => a + (b || 0), 0);
+    const pace = lapS && calLap > 30 ? Math.max(.85, Math.min(1.8, lapS / calLap)) : 1;
+    const durS = ch.dur[m.k] ? ch.dur[m.k] * pace : (lapS || 100) / s.n;
+    const f = m.known ? Math.min(.95, (now - m.t0) / durS) : .5;
+    m.lapS = lapS || 100;
+    return m.lap + a + Math.max(0, b - a) * f;
   }
 
   // ------------------------------------------------------------ mappa
@@ -1105,15 +1178,6 @@
   const LERP = 0.16;                 // quanto della distanza recuperare a ogni fotogramma
   const carVis = {};                 // num -> { u: giri non avvolti, i: punto vicino } oppure { x, y }
   let mapRaf = 0, mapLayer = null, mapLayerKey = "";
-  /** Frazione di giro (0–1) del punto del tracciato più vicino a [x, y]; cerca vicino a `hint` se c'è. */
-  function fracOf([x, y], hint) {
-    const { order, cum, total } = getTrackModel(), n = order.length;
-    let best = 0, bd = Infinity;
-    const scan = (i) => { const [px, py] = order[(i % n + n) % n], d = (px - x) ** 2 + (py - y) ** 2; if (d < bd) { bd = d; best = (i % n + n) % n; } };
-    if (hint != null) for (let k = -40; k <= 40; k++) scan(hint + k);
-    if (hint == null || bd > 250 ** 2) for (let i = 0; i < n; i++) scan(i);   // perso: ricerca completa
-    return { u: cum[best] / total, i: best };
-  }
   function renderMap() { if (!mapRaf) mapRaf = requestAnimationFrame(mapLoop); }
   function mapLoop() {
     mapRaf = 0;
@@ -1123,7 +1187,9 @@
   }
   document.addEventListener("visibilitychange", () => { if (!document.hidden && state) renderMap(); });
   function setHint(t) { const h = $("#map-hint"); if (h.textContent !== t) h.textContent = t; }
+  let lastFrame = 0, frameDt = 1 / 60;
   function drawMap() {
+    const nowF = performance.now(); frameDt = lastFrame ? Math.min(.25, (nowF - lastFrame) / 1000) : 1 / 60; lastFrame = nowF;
     loadMap();
     const cv = $("#map-canvas"), ctx = cv.getContext("2d");
     const rot = mapData ? (mapData.rotation || 0) * Math.PI / 180 : 0;
@@ -1175,24 +1241,22 @@
         else { v.x += (p.x - v.x) * LERP; v.y += (p.y - v.y) * LERP; }
         at = [carVis[d.num].x, carVis[d.num].y];
       } else if (estimate) {
-        if (d.retired || d.stopped) { delete carVis[d.num]; continue; }
-        if (d.inpit) { delete carVis[d.num]; box.push(d); continue; }
-        const raw = estimatedPoint(d); if (!raw) continue;
-        const v = carVis[d.num], t = fracOf(raw, v?.i);
-        if (!v || v.u == null) carVis[d.num] = { u: t.u, i: t.i };
-        else {
-          let delta = t.u - (((v.u % 1) + 1) % 1);
-          if (delta > .5) delta -= 1; if (delta < -.5) delta += 1;
-          if (Math.abs(delta) > .15) v.u = t.u;                       // salto vero (rientro, riaggancio): si va lì
-          else if (delta > 0) v.u += delta * LERP;                    // avanti a piccoli passi
-          // un passo indietro piccolo è rumore della stima: la macchina resta dov'è
-          v.i = t.i;
-        }
+        if (d.retired || d.stopped || d.inpit) { delete carVis[d.num]; delete motion[d.num]; if (d.inpit && !d.retired) box.push(d); continue; }
+        const t = estimatedLaps(d, performance.now() / 1000); if (t == null) continue;
+        const v = carVis[d.num];
+        if (!v || v.u == null || Math.abs(t - v.u) > .3) carVis[d.num] = { u: t };     // prima volta o rientro: si va lì
+        // avanti, mai indietro; e se è rimasta indietro recupera al massimo a 2,2 volte la sua media
+        // sul giro, così si vede una macchina che rimonta e non un pallino che schizza
+        else if (t > v.u) v.u += Math.min((t - v.u) * LERP, frameDt * 2.2 / (motion[d.num]?.lapS || 100));
         at = pointAt(carVis[d.num].u);
       } else continue;
       const [x, y] = P(R(at));
       cars.push({ d, x, y, hi: d.num === prefs.follow, fav: isFav(d.num) });
     }
+    // per le prove automatiche (?nogps): posizione di ogni macchina in giri e lunghezza della pista
+    if (forceEstimate && mapData && !window.__trk) { const m = getTrackModel(); window.__trk = { order: m.order, cum: m.cum, total: m.total }; }
+    if (forceEstimate) window.__mappa = { t: performance.now(), total: mapData ? getTrackModel().total : 0, u: Object.fromEntries(Object.entries(carVis).map(([n, v]) => [n, v.u])),
+      xy: Object.fromEntries(Object.entries(carVis).map(([n, v]) => [n, v.u != null && mapData ? pointAt(v.u) : null])), gps: Object.fromEntries(Object.entries(lastPos).map(([n, p]) => [n, [p.x, p.y, p.status]])), mot: JSON.parse(JSON.stringify(motion)), start: chain?.start, dur: chain?.dur };
     // pallini: prima gli altri, sopra i preferiti e il pilota seguito
     cars.sort((a, b) => (a.hi - b.hi) || (a.fav - b.fav) || ((b.d.pos || 99) - (a.d.pos || 99)));
     for (const c of cars) {

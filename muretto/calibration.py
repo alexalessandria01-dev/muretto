@@ -96,7 +96,7 @@ def _next_state(k: int, n: int) -> int:
 def learn(track_map: dict, folder: Path) -> dict | None:
     """Da una sessione in archivio, per ogni stato: dove comincia, quanto dura e il punto tipico.
 
-    Restituisce ``{"n": minisettori, "states": [...]}`` con n+1 voci (lo stato n è
+    Restituisce ``{"n": minisettori, "sectors": minisettori per settore, "states": [...]}`` con n+1 voci (lo stato n è
     "tutti accesi", cioè appena passato il traguardo). Ogni voce è None oppure
     ``{"point": [x, y], "path": [[x, y], ...], "dur": secondi}``: la pagina fa
     avanzare la macchina lungo ``path`` col tempo passato nello stato, e usa
@@ -115,6 +115,7 @@ def learn(track_map: dict, folder: Path) -> dict | None:
     durs: dict[int, list[float]] = defaultdict(list)    # quanto si resta nello stato
     cur: dict[str, tuple[int, float]] = {}
     n_segs, next_sample = None, 0.0
+    sec_counts: list[int] = []
     for ts, topic, data in msgs:
         st.apply(topic, data, ts)
         lines = st.data.get("TimingData", {}).get("Lines") or {}
@@ -126,7 +127,9 @@ def learn(track_map: dict, folder: Path) -> dict | None:
                 ks = lap_state(st._sectors(line))
                 if not ks or (n_segs and ks[1] != n_segs):
                     continue
-                n_segs = n_segs or ks[1]
+                if not n_segs:
+                    n_segs = ks[1]
+                    sec_counts = [len(sec.get("seg", [])) for sec in st._sectors(line)]
                 k = ks[0]
                 prev = cur.get(num)
                 if prev and prev[0] == k:
@@ -172,7 +175,9 @@ def learn(track_map: dict, folder: Path) -> dict | None:
     learned = sum(s is not None for s in states)
     moving = sum(bool(s and s.get("path")) for s in states)
     log.info("posizioni stimate: %d stati su %d imparati (%d con avanzamento) da %s", learned, n_segs + 1, moving, folder.name)
-    return {"n": n_segs, "states": states} if learned else None
+    # i minisettori per settore servono alla pagina: da una sessione all'altra la F1 può cambiarli
+    # (Baku 2026: 8-10-8 in qualifica, 8-10-9 in gara)
+    return {"n": n_segs, "sectors": sec_counts, "states": states} if learned else None
 
 
 async def reference_session(current_path: str, circuit_key: int, year: int) -> str | None:
