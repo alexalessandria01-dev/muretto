@@ -610,13 +610,13 @@ body[data-flag="red"] { --flag-c: rgba(255, 69, 58, .8); }
 }
 
 /* ---------- telefono: intestazione compatta, intervallo in grande, pallini sulle schede */
-.wx-toggle { display: none; }
+/* meteo compatto anche su computer: aria e pista; il resto (vento, umidità, pressione, pioggia) a richiesta */
 .col-gap .i { display: none; }
-body.m .stat.wx { display: none; }
-body.m.wx-open .stat.wx { display: flex; }
-body.m .wx-toggle { display: flex; cursor: pointer; font: inherit; color: inherit; }
-body.m .wx-toggle .k::after { content: " ▾"; }
-body.m.wx-open .wx-toggle .k::after { content: " ▴"; }
+.stat.wx { display: none; }
+body.wx-open .stat.wx { display: flex; }
+.wx-toggle { display: flex; cursor: pointer; font: inherit; color: inherit; text-align: left; line-height: 1; padding: 0; }
+.wx-toggle .k::after { content: " ▾"; }
+body.wx-open .wx-toggle .k::after { content: " ▴"; }
 /* in gara la cosa da guardare è chi ha davanti: intervallo grande, gap dal leader piccolo sotto */
 body.m.race td.col-gap { display: flex !important; flex-direction: column; align-items: flex-end; line-height: 1.15; }
 body.m.race td.col-gap .i { display: block; font-size: 16px; font-weight: 700; }
