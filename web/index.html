@@ -3,11 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#07090c">
+<meta name="theme-color" content="#0b0b0e">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Muretto">
 <title>Muretto</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Titillium+Web:wght@400;600;700;900&family=JetBrains+Mono:wght@400;600;700;800&display=swap">
 <link rel="stylesheet" href="/web/vendor/uPlot.min.css">
 <link rel="stylesheet" href="/web/style.css">
 </head>
@@ -30,6 +33,7 @@
   <div class="stat wx"><span class="k">Pioggia</span><span class="v" id="w-rain">–</span></div>
   <div class="stat" id="replay-box" hidden><span class="k">Replay</span><span class="v" id="replay-pos">–</span></div>
   <div id="hdr-tools">
+    <label id="hdr-follow"><span class="k">Segui</span> <select id="follow"></select></label>
     <button id="alerts-btn" type="button" title="tocca per suoni, vibrazione e schermo sempre acceso">Attiva avvisi</button>
     <!-- Sincronizza con la TV: in gara tocca "TV" quando in TV cambia il contagiri;
          in prove e qualifica scrivi l'orologio che vedi in TV -->
@@ -41,6 +45,7 @@
       <button id="tv-clock-ok" type="button">OK</button>
     </span>
     <span id="tv-state" class="hint" aria-live="polite"></span>
+    <button id="settings-toggle" type="button" aria-expanded="false" aria-controls="settings" title="Impostazioni"><span class="gear" aria-hidden="true">⚙</span><span class="lbl">Impostazioni</span></button>
   </div>
   <div id="conn" class="dot" title="connessione"></div>
 </header>
@@ -55,13 +60,14 @@
   <span class="rc-more" id="rc-ticker-more"></span>
 </button>
 
-<button id="settings-toggle" type="button" aria-expanded="false" aria-controls="settings">Impostazioni</button>
 
-<nav id="settings">
-  <label>Segui <select id="follow"></select></label>
+<div id="settings-veil" hidden></div>
+<nav id="settings" aria-label="Impostazioni">
+  <div class="drawer-head"><h2>Impostazioni</h2><button id="settings-close" type="button" aria-label="Chiudi">✕</button></div>
+  <h3 class="drawer-t">Sincronizzazione</h3>
   <label title="Il feed è avanti rispetto alla TV: metti i secondi di ritardo per allinearlo, o usa il tasto TV in alto">Ritardo TV <input id="delay" type="number" min="0" max="299" step="0.1" value="0"> s</label>
   <label>Pit loss <input id="pit-loss" type="number" step="0.5" min="10" max="40"> s <span class="hint" id="pit-loss-hint"></span></label>
-  <span class="sep"></span>
+  <h3 class="drawer-t">Pannelli</h3>
   <label><input type="checkbox" data-panel="battle" checked> Battaglia</label>
   <label><input type="checkbox" data-panel="wall" checked> Muretto</label>
   <label><input type="checkbox" data-panel="gaps" checked> Gap</label>
@@ -72,7 +78,7 @@
   <label><input type="checkbox" data-panel="perf" checked> Prestazioni</label>
   <label><input type="checkbox" data-panel="champ" checked> Campionato</label>
   <label><input type="checkbox" data-panel="cmp" checked> Confronto giri</label>
-  <span class="sep"></span>
+  <h3 class="drawer-t">Opzioni</h3>
   <label><input type="checkbox" id="opt-metrics"> Marcia/velocità in tabella</label>
   <label><input type="checkbox" id="opt-autoplay" checked> Radio automatici</label>
   <label><input type="checkbox" id="opt-chime"> Campanello direzione gara</label>
@@ -134,28 +140,7 @@
       <div id="wall-cards"></div>
     </section>
 
-    <section class="panel" id="gaps">
-      <div class="panel-head"><h2>Gap dal leader, giro per giro</h2><span class="hint">asse invertito: più in alto = più vicino al leader</span></div>
-      <div id="chart-gaps"></div>
-    </section>
   </aside>
-
-  <section class="panel" id="telemetry">
-    <div class="panel-head">
-      <h2>Telemetria</h2>
-      <label>1 <select class="tel-driver" data-slot="0"></select></label>
-      <label>2 <select class="tel-driver" data-slot="1"></select></label>
-      <label>3 <select class="tel-driver" data-slot="2"></select></label>
-      <span class="hint">ultimi 60 s · pieno = gas, tratteggio = freno</span>
-    </div>
-    <div class="hint big-hint" id="tel-hint" hidden>Account F1 TV collegato: la telemetria compare appena le macchine sono in pista.</div>
-    <div class="charts">
-      <div id="chart-speed"></div>
-      <div id="chart-pedals"></div>
-      <div id="chart-rpm"></div>
-      <div id="chart-gear"></div>
-    </div>
-  </section>
 
   <section class="panel" id="map">
     <div class="panel-head"><h2>Mappa</h2><span class="hint" id="map-hint"></span></div>
@@ -181,42 +166,70 @@
     <ul id="rc-list"></ul>
   </section>
 
-  <section class="panel" id="perf">
-    <div class="panel-head"><h2>Prestazioni</h2></div>
-    <p class="explain"><b>Giro teorico</b>: il giro che ogni pilota farebbe mettendo insieme i suoi tre settori migliori. <b>Lasciato</b> è quanto il suo giro migliore vero è più lento di così: più è alto, più tempo ha ancora in tasca.</p>
-    <div id="perf-theo"></div>
-    <p class="explain"><b>Chi è più veloce dove</b>: i cinque migliori in ogni settore e nella velocità di punta. Il pilota che segui compare sempre.</p>
-    <div class="ranks" id="perf-ranks"></div>
-    <div class="panel-head sub"><h2>Posizioni giro per giro</h2></div>
-    <p class="explain">Una linea per pilota: più in alto vuol dire più avanti in classifica. Forti quello che segui e i preferiti, sbiadite le altre.</p>
-    <div id="chart-laps"></div>
-  </section>
+  <!-- Analisi: su computer una scheda alla volta, per non avere tutto addosso -->
+  <div id="analysis">
+    <nav id="an-tabs" aria-label="Analisi">
+      <span class="an-title">Analisi</span>
+      <button data-an="gaps">Gap</button><button data-an="telemetry">Telemetria</button><button data-an="perf">Prestazioni</button><button data-an="champ">Campionato</button><button data-an="cmp">Confronto giri</button>
+    </nav>
+    <section class="panel" id="gaps">
+      <div class="panel-head"><h2>Gap dal leader, giro per giro</h2><span class="hint">asse invertito: più in alto = più vicino al leader</span></div>
+      <div id="chart-gaps"></div>
+    </section>
+    <section class="panel" id="telemetry">
+      <div class="panel-head">
+        <h2>Telemetria</h2>
+        <label>1 <select class="tel-driver" data-slot="0"></select></label>
+        <label>2 <select class="tel-driver" data-slot="1"></select></label>
+        <label>3 <select class="tel-driver" data-slot="2"></select></label>
+        <span class="hint">ultimi 60 s · pieno = gas, tratteggio = freno</span>
+      </div>
+      <div class="hint big-hint" id="tel-hint" hidden>Account F1 TV collegato: la telemetria compare appena le macchine sono in pista.</div>
+      <div class="charts">
+        <div id="chart-speed"></div>
+        <div id="chart-pedals"></div>
+        <div id="chart-rpm"></div>
+        <div id="chart-gear"></div>
+      </div>
+    </section>
 
-  <section class="panel" id="cmp">
-    <div class="panel-head"><h2>Confronto giri</h2></div>
-    <p class="explain">I giri migliori di due o tre piloti sovrapposti lungo la pista: velocità, gas, freno, marcia e <b>distacco metro per metro</b>, come nelle analisi di telemetria che si vedono dopo le sessioni. Funziona sulle sessioni già finite: la F1 pubblica la telemetria solo a sessione conclusa.</p>
-    <div class="cmp-controls">
-      <label>Sessione <select id="cmp-session"></select></label>
-      <label>1 <select class="cmp-driver"></select></label>
-      <label>2 <select class="cmp-driver"></select></label>
-      <label>3 <select class="cmp-driver"></select></label>
-      <button id="cmp-go" type="button">Confronta</button>
-    </div>
-    <div id="cmp-status" class="hint"></div>
-    <div id="cmp-summary"></div>
-    <div id="cmp-charts">
-      <h3 class="cmp-t">Distacco dal primo (s) <span class="hint">sopra lo zero = più lento</span></h3><div id="cmp-delta"></div>
-      <h3 class="cmp-t">Velocità (km/h)</h3><div id="cmp-speed"></div>
-      <h3 class="cmp-t">Gas (%)</h3><div id="cmp-throttle"></div>
-      <h3 class="cmp-t">Freno</h3><div id="cmp-brake"></div>
-      <h3 class="cmp-t">Marcia</h3><div id="cmp-gear"></div>
-    </div>
-  </section>
+    <section class="panel" id="perf">
+      <div class="panel-head"><h2>Prestazioni</h2></div>
+      <p class="explain"><b>Giro teorico</b>: il giro che ogni pilota farebbe mettendo insieme i suoi tre settori migliori. <b>Lasciato</b> è quanto il suo giro migliore vero è più lento di così: più è alto, più tempo ha ancora in tasca.</p>
+      <div id="perf-theo"></div>
+      <p class="explain"><b>Chi è più veloce dove</b>: i cinque migliori in ogni settore e nella velocità di punta. Il pilota che segui compare sempre.</p>
+      <div class="ranks" id="perf-ranks"></div>
+      <div class="panel-head sub"><h2>Posizioni giro per giro</h2></div>
+      <p class="explain">Una linea per pilota: più in alto vuol dire più avanti in classifica. Forti quello che segui e i preferiti, sbiadite le altre.</p>
+      <div id="chart-laps"></div>
+    </section>
 
-  <section class="panel" id="champ">
-    <div class="panel-head"><h2>Campionato se finisse adesso</h2><span class="hint" id="champ-hint"></span></div>
-    <div id="champ-body"></div>
-  </section>
+    <section class="panel" id="cmp">
+      <div class="panel-head"><h2>Confronto giri</h2></div>
+      <p class="explain">I giri migliori di due o tre piloti sovrapposti lungo la pista: velocità, gas, freno, marcia e <b>distacco metro per metro</b>, come nelle analisi di telemetria che si vedono dopo le sessioni. Funziona sulle sessioni già finite: la F1 pubblica la telemetria solo a sessione conclusa.</p>
+      <div class="cmp-controls">
+        <label>Sessione <select id="cmp-session"></select></label>
+        <label>1 <select class="cmp-driver"></select></label>
+        <label>2 <select class="cmp-driver"></select></label>
+        <label>3 <select class="cmp-driver"></select></label>
+        <button id="cmp-go" type="button">Confronta</button>
+      </div>
+      <div id="cmp-status" class="hint"></div>
+      <div id="cmp-summary"></div>
+      <div id="cmp-charts">
+        <h3 class="cmp-t">Distacco dal primo (s) <span class="hint">sopra lo zero = più lento</span></h3><div id="cmp-delta"></div>
+        <h3 class="cmp-t">Velocità (km/h)</h3><div id="cmp-speed"></div>
+        <h3 class="cmp-t">Gas (%)</h3><div id="cmp-throttle"></div>
+        <h3 class="cmp-t">Freno</h3><div id="cmp-brake"></div>
+        <h3 class="cmp-t">Marcia</h3><div id="cmp-gear"></div>
+      </div>
+    </section>
+
+    <section class="panel" id="champ">
+      <div class="panel-head"><h2>Campionato se finisse adesso</h2><span class="hint" id="champ-hint"></span></div>
+      <div id="champ-body"></div>
+    </section>
+  </div>
 </main>
 
 <!-- Schede: solo su telefono, mostrano un pannello alla volta. -->

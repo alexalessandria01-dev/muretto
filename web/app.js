@@ -17,7 +17,7 @@
     panels: store("panels", {}), metrics: store("metrics", false), autoplay: store("autoplay", true), chime: store("chime", false),
     delay: store("delay", 0), pitLoss: store("pitLoss", null), tab: store("tab", "board"),
     wallAll: store("wallAll", false), mobile: store("mobile", "auto"), rcFilter: store("rcFilter", "all"), radioFilter: store("radioFilter", "all"),
-    alerts: store("alerts", false),
+    alerts: store("alerts", false), an: store("an", "gaps"),
   };
   /** Pit loss in uso: quella scelta dall'utente, altrimenti quella del server (già adattata a SC/VSC). */
   const pitLossNow = () => prefs.pitLoss ?? state.pit_loss.value;
@@ -222,6 +222,7 @@
     const telOk = telAvailable();
     $("#tel-toggle").hidden = !telOk; $("#opt-metrics").closest("label").hidden = !telOk;
     document.body.classList.toggle("no-tel", !panelOn("telemetry"));
+    renderAnTabs();
     renderF1tv();
     $("#opt-metrics").checked = prefs.metrics; $("#opt-autoplay").checked = prefs.autoplay; $("#opt-chime").checked = prefs.chime;
     $("#opt-wall-all").checked = prefs.wallAll;
@@ -271,7 +272,7 @@
     const el = $("#hero");
     if (!isMobile()) { el.innerHTML = ""; return; }
     const me = byNum(prefs.follow);
-    if (!me) { el.innerHTML = '<div class="empty">Scegli un pilota da seguire in <b>Impostazioni</b> per vederlo qui.</div>'; return; }
+    if (!me) { el.innerHTML = '<div class="empty">Scegli un pilota da seguire in alto (<b>Segui</b>) per vederlo qui.</div>'; return; }
 
     const ahead = state.drivers.find((d) => d.pos === me.pos - 1), behind = state.drivers.find((d) => d.pos === me.pos + 1);
     const gained = me.gained == null || !isRace() ? ""
@@ -1213,7 +1214,7 @@
     let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
     for (const [x, y] of pts) { if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y; }
     const aspect = Math.max(.55, Math.min(1.05, (maxY - minY) / (maxX - minX || 1) + .12));
-    const H = Math.round(W * aspect);
+    const H = Math.min(Math.round(W * aspect), 560);   // larga quanto serve, ma mai più alta di così
     if (cv.width !== Math.round(W * dpr) || cv.height !== Math.round(H * dpr)) { cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); cv.style.height = H + "px"; }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, W, H);
@@ -1386,6 +1387,15 @@
       b.dataset.dot = n > 0 ? String(n) : "";
     }
   }
+  /** Schede di Analisi: nascoste quelle dei pannelli spenti, attiva l'ultima scelta (o la prima rimasta). */
+  const AN = ["gaps", "telemetry", "perf", "champ", "cmp"];
+  function renderAnTabs() {
+    const vis = AN.filter((id) => !$("#" + id).hidden);
+    if (!vis.includes(prefs.an)) prefs.an = vis[0];
+    for (const b of $("#an-tabs").querySelectorAll("button")) { b.hidden = !vis.includes(b.dataset.an); b.classList.toggle("on", b.dataset.an === prefs.an); }
+    for (const id of AN) $("#" + id).classList.toggle("an-active", id === prefs.an);
+    $("#analysis").hidden = !vis.length;
+  }
   /** Mostra un solo pannello. I grafici vanno ricostruiti: fino a un attimo prima avevano larghezza 0. */
   function setTab(name) {
     prefs.tab = name; save("tab", name);
@@ -1427,9 +1437,22 @@
     const open = document.body.classList.toggle("wx-open");
     e.currentTarget.setAttribute("aria-expanded", String(open));
   });
-  $("#settings-toggle").addEventListener("click", (e) => {
-    const open = document.body.classList.toggle("settings-open");
-    e.currentTarget.setAttribute("aria-expanded", String(open));
+  /** Impostazioni: su computer un pannello laterale che si apre sopra la pagina, su telefono una tendina. */
+  function setSettings(open) {
+    document.body.classList.toggle("settings-open", open);
+    $("#settings-toggle").setAttribute("aria-expanded", String(open));
+    $("#settings-veil").hidden = !open || isMobile();
+  }
+  $("#settings-toggle").addEventListener("click", () => setSettings(!document.body.classList.contains("settings-open")));
+  $("#settings-close").addEventListener("click", () => setSettings(false));
+  $("#settings-veil").addEventListener("click", () => setSettings(false));
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && document.body.classList.contains("settings-open")) setSettings(false); });
+  // Analisi (computer): una scheda alla volta
+  $("#an-tabs").addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-an]"); if (!b) return;
+    prefs.an = b.dataset.an; save("an", prefs.an);
+    renderAnTabs(); chartKey = ""; gapKey = ""; lapKey = ""; cmpKey = "";
+    if (state) { renderTelemetry(); renderGaps(); renderPerf(); renderCmp(); }
   });
   /** Passando fra telefono e desktop cambia sia la scheda del pilota sia chi è visibile. */
   mq.addEventListener("change", () => { if (applyMobileMode()) { chartKey = ""; gapKey = ""; if (state) render(); } });

@@ -4,20 +4,20 @@
  */
 
 :root {
-  /* superfici: tre livelli, dal fondo pagina al pannello in evidenza */
-  --bg: #07090c; --bg-soft: #0b0e13; --panel: #11151b; --panel-2: #161b22; --sunken: #0a0d12;
-  --line: #1f242c; --line-soft: #181d24;
-  --text: #eef1f5; --muted: #7d8694; --dim: #555c67;
-  --accent: #e8112d;
-  --green: #2ee06a; --yellow: #ffd426; --red: #ff453a; --purple: #c084ff; --blue: #4d94ff;
+  /* stile tra f1-dash (scuro, piatto, ordinato) e l'app ufficiale F1 (rosso F1, colori squadra, Titillium) */
+  --bg: #0b0b0e; --bg-soft: #101014; --panel: #141418; --panel-2: #18181d; --sunken: #0e0e12;
+  --line: #26262d; --line-soft: #1c1c22;
+  --text: #f4f4f5; --muted: #8e8e99; --dim: #5a5a64;
+  --accent: #e10600;
+  --green: #22c55e; --yellow: #facc15; --red: #ef4444; --purple: #a855f7; --blue: #3b82f6;
   --soft: #ff3b30; --medium: #ffd60a; --hard: #f2f2f2; --inter: #34c759; --wet: #0a84ff;
 
-  --r: 14px; --r-sm: 9px; --r-xs: 5px;
-  --shadow: 0 1px 2px rgba(0, 0, 0, .45), 0 10px 30px -18px rgba(0, 0, 0, .8);
-  --gap: 14px;
+  --r: 12px; --r-sm: 8px; --r-xs: 5px;
+  --shadow: none;
+  --gap: 12px;
 
-  font-family: -apple-system, "SF Pro Text", "Helvetica Neue", Inter, Roboto, sans-serif;
-  --mono: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  font-family: "Titillium Web", -apple-system, "SF Pro Text", "Helvetica Neue", Roboto, sans-serif;
+  --mono: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
   color-scheme: dark;
 }
 * { box-sizing: border-box; }
@@ -26,18 +26,14 @@
 html { -webkit-text-size-adjust: 100%; }
 html, body { margin: 0; color: var(--text); font-size: 14px; line-height: 1.45; }
 body {
-  padding: 0 16px 20px;
-  background:
-    radial-gradient(1100px 520px at 12% -10%, #131a24 0%, transparent 60%),
-    radial-gradient(900px 480px at 100% 0%, #1a1016 0%, transparent 55%),
-    var(--bg);
-  background-attachment: fixed;
+  padding: 0 18px 24px;
+  background: var(--bg);
 }
-h1, h2, h3 { font-weight: 650; }
+h1, h2, h3 { font-weight: 700; }
 button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
 
 /* etichette piccole maiuscole: usate per ogni "nome del dato" */
-.k, .panel-head h2, th, .stat .k, .tab-label { font-size: 10px; font-weight: 650; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+.k, .panel-head h2, th, .stat .k, .tab-label { font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
 
 /* ---------- header */
 #top {
@@ -46,16 +42,16 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
   border-bottom: 1px solid var(--line);
 }
 .brand { display: flex; align-items: baseline; gap: 12px; min-width: 0; }
-.brand .name { font-weight: 800; letter-spacing: .16em; font-size: 17px; }
-.brand .name::before { content: ""; display: inline-block; width: 4px; height: 15px; margin-right: 9px; border-radius: 2px; background: var(--accent); vertical-align: -1px; }
+.brand .name { font-weight: 900; letter-spacing: .14em; font-size: 19px; font-style: italic; }
+.brand .name::before { content: ""; display: inline-block; width: 14px; height: 4px; margin-right: 9px; border-radius: 1px; background: var(--accent); vertical-align: 4px; transform: skewX(-20deg); }
 .brand .sub { color: var(--muted); font-size: 13px; font-weight: 400; letter-spacing: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .stat { display: flex; flex-direction: column; gap: 3px; line-height: 1; }
-.stat .v { font-family: var(--mono); font-size: 16px; font-variant-numeric: tabular-nums; }
+.stat .v { font-family: var(--mono); font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .pill {
   padding: 7px 15px; border-radius: 999px; font-size: 11px; font-weight: 800; letter-spacing: .13em;
   color: #07090c; min-width: 118px; text-align: center; text-transform: uppercase;
 }
-.pill.green { background: var(--green); box-shadow: 0 0 0 1px rgba(46, 224, 106, .3), 0 0 22px -6px rgba(46, 224, 106, .5); }
+.pill.green { background: var(--green); }
 .pill.yellow { background: var(--yellow); }
 .pill.sc, .pill.vsc, .pill.vsc_ending { background: var(--yellow); animation: blink 1s steps(2) infinite; }
 .pill.red { background: var(--red); color: #fff; animation: blink .6s steps(2) infinite; }
@@ -82,15 +78,28 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
 #rc-ticker.flag-CHEQUERED { border-left-color: var(--text); }
 #rc-ticker.cat-SafetyCar { border-left-color: var(--yellow); color: var(--yellow); background: rgba(255, 212, 38, .10); }
 
-/* ---------- barra impostazioni */
-#settings-toggle { display: none; }
+/* ---------- impostazioni: pannello laterale che si apre dal pulsante in alto */
+#hdr-follow { display: inline-flex; align-items: center; gap: 7px; }
+#hdr-follow .k { margin: 0; }
+#settings-toggle { display: inline-flex; align-items: center; gap: 7px; }
+#settings-toggle .gear { font-size: 15px; line-height: 1; }
+#settings-veil { position: fixed; inset: 0; z-index: 60; background: rgba(0, 0, 0, .5); }
 #settings {
-  display: flex; align-items: center; gap: 15px; flex-wrap: wrap;
-  padding: 11px 2px; border-bottom: 1px solid var(--line); font-size: 12px; color: var(--muted);
+  position: fixed; top: 0; right: 0; bottom: 0; z-index: 61; width: min(380px, 92vw); overflow-y: auto;
+  display: flex; flex-direction: column; align-items: stretch; gap: 10px;
+  padding: 18px 20px 28px; background: var(--panel); border-left: 1px solid var(--line);
+  font-size: 13px; color: var(--text);
+  transform: translateX(100%); visibility: hidden; transition: transform .22s ease, visibility 0s .22s;
 }
-#settings label { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
-#settings .sep { width: 1px; height: 16px; background: var(--line); }
-#settings input[type=checkbox] { accent-color: var(--accent); width: 15px; height: 15px; }
+body.settings-open #settings { transform: none; visibility: visible; transition: transform .22s ease; }
+#settings .drawer-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 2px; }
+#settings .drawer-head h2 { margin: 0; font-size: 18px; font-weight: 700; }
+#settings .drawer-t { margin: 12px 0 0; font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+#settings label { display: flex; align-items: center; gap: 9px; white-space: nowrap; }
+#settings .sep { display: none; }
+#settings input[type=checkbox] { accent-color: var(--accent); width: 16px; height: 16px; }
+#settings-close { font-size: 16px; width: 32px; height: 32px; border-radius: 50%; color: var(--muted); }
+#settings-close:hover { background: var(--panel-2); color: var(--text); }
 select, input[type=number] {
   background: var(--sunken); color: var(--text); border: 1px solid var(--line);
   border-radius: var(--r-xs); padding: 5px 7px; font: inherit;
@@ -99,35 +108,39 @@ select:focus-visible, input:focus-visible, button:focus-visible { outline: 2px s
 input[type=number] { width: 66px; font-family: var(--mono); font-variant-numeric: tabular-nums; }
 .hint { font-size: 11px; color: var(--muted); }
 
-/* ---------- layout */
+/* ---------- layout: prima il tabellone con battaglia e muretto, poi mappa grande con direzione gara
+   e radio accanto, infine l'Analisi a schede (una alla volta) */
 main {
   display: grid; gap: var(--gap); margin-top: var(--gap);
   grid-template-columns: minmax(0, 1fr) clamp(340px, 31vw, 470px);
-  grid-template-areas: "board side" "tel map" "radio rc" "perf champ" "cmp cmp";
+  grid-template-areas: "board side" "map rc" "map radio" "an an";
+  grid-template-rows: auto auto 1fr auto;
 }
 #board { grid-area: board; }
 #side { grid-area: side; display: flex; flex-direction: column; gap: var(--gap); min-width: 0; }
-#telemetry { grid-area: tel; }
-#map { grid-area: map; }
-#radio { grid-area: radio; }
+#map { grid-area: map; align-self: start; }
+#radio { grid-area: radio; min-height: 0; }
 #rc { grid-area: rc; }
-#perf { grid-area: perf; }
-#champ { grid-area: champ; }
-#cmp { grid-area: cmp; }
+#analysis { grid-area: an; min-width: 0; }
+#analysis > .panel { display: none; border-top-left-radius: 0; border-top-right-radius: 0; }
+#analysis > .panel.an-active { display: block; }
+#analysis > .panel[hidden] { display: none !important; }
+#an-tabs { display: flex; align-items: flex-end; gap: 2px; flex-wrap: wrap; }
+#an-tabs .an-title { font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); margin: 0 14px 9px 2px; }
+#an-tabs button { padding: 9px 16px; border-radius: var(--r-sm) var(--r-sm) 0 0; color: var(--muted); font-weight: 600; font-size: 14px; border: 1px solid transparent; border-bottom: 0; }
+#an-tabs button:hover { color: var(--text); }
+#an-tabs button.on { color: var(--text); background: var(--panel); border-color: var(--line); box-shadow: inset 0 2px 0 var(--accent); }
 .panel[hidden] { display: none !important; }
-/* senza telemetria (diretta senza account F1 TV) la mappa sale accanto ai radio invece di restare sola */
-@media (min-width: 1101px) {
-  body.no-tel main { grid-template-areas: "board side" "radio map" "rc champ" "perf perf" "cmp cmp"; }
-}
 @media (max-width: 1100px) {
-  main { grid-template-columns: 1fr; grid-template-areas: "board" "side" "tel" "map" "radio" "rc" "perf" "champ" "cmp"; }
+  main { grid-template-columns: 1fr; grid-template-areas: "board" "side" "map" "rc" "radio" "an"; grid-template-rows: none; }
 }
 .panel {
-  background: linear-gradient(var(--panel-2), var(--panel) 120px);
+  background: var(--panel);
   border: 1px solid var(--line); border-radius: var(--r); padding: 14px 16px 16px;
-  min-width: 0; box-shadow: var(--shadow);
+  min-width: 0;
 }
 .panel-head { display: flex; align-items: baseline; gap: 6px 14px; flex-wrap: wrap; margin-bottom: 12px; padding-bottom: 10px; border-bottom: 1px solid var(--line-soft); }
+.panel-head h2 { color: var(--text); font-size: 12px; }
 .panel-head h2 { margin: 0; flex: none; }
 .panel-head label { font-size: 12px; color: var(--muted); }
 .panel-head .hint { min-width: 0; }
@@ -150,20 +163,21 @@ main {
 
 /* ---------- tabellone */
 table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
-th { position: sticky; top: 0; z-index: 2; text-align: left; padding: 0 7px 7px; background: var(--panel-2); border-bottom: 1px solid var(--line); }
-td { padding: 5px 7px; border-bottom: 1px solid var(--line-soft); white-space: nowrap; font-family: var(--mono); font-size: 13px; }
+th { position: sticky; top: 0; z-index: 2; text-align: left; padding: 0 8px 8px; background: var(--panel); border-bottom: 1px solid var(--line); }
+td { padding: 6px 8px; border-bottom: 1px solid var(--line-soft); white-space: nowrap; font-family: var(--mono); font-size: 13px; }
+tbody tr:hover td { background: rgba(255, 255, 255, .025); }
 th.r, td.r { text-align: right; }
 tbody tr { transition: background .15s; }
-tr.follow td { background: rgba(232, 17, 45, .13); }
+tr.follow td { background: rgba(225, 6, 0, .14); }
 tr.follow td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
 tr.fav td { background: rgba(77, 148, 255, .09); }
 tr.retired td, tr.out td { opacity: .35; }
 tr.danger td { background: rgba(255, 69, 58, .10); }
 td.star { cursor: pointer; color: #333a44; width: 26px; text-align: center; font-size: 15px; }
 td.star.on { color: var(--yellow); }
-td.pos { font-weight: 800; font-size: 15px; width: 30px; }
+td.pos { font-family: "Titillium Web", sans-serif; font-weight: 900; font-size: 17px; width: 32px; }
 .drv { display: inline-flex; align-items: center; gap: 9px; font-family: var(--mono); font-weight: 700; letter-spacing: .03em; }
-.drv i { width: 4px; height: 17px; border-radius: 2px; display: inline-block; }
+.drv i { width: 5px; height: 20px; border-radius: 2px; display: inline-block; }
 .gained { font-size: 10px; margin-left: 5px; font-family: inherit; font-weight: 700; }
 .gained.up { color: var(--green); } .gained.down { color: var(--red); }
 .drs {
@@ -398,6 +412,17 @@ body.m #hero { display: block; margin-top: 12px; }
 /* un pannello alla volta, scelto dalle schede in basso */
 body.m main { display: block; margin-top: 12px; }
 body.m #side { display: contents; }
+body.m #analysis { display: contents; }
+body.m #an-tabs { display: none; }
+body.m #analysis > .panel { border-radius: var(--r-sm); display: none; }
+body.m #analysis > .panel.tab-active { display: block; }
+body.m #hdr-follow { display: flex; width: 100%; }
+body.m #hdr-follow select { flex: 1; }
+body.m #settings-toggle { padding-left: 16px; padding-right: 16px; }
+body.m #settings-toggle .gear { display: none; }
+body.m #settings { position: static; transform: none; visibility: visible; width: auto; display: none; padding: 13px 2px; border: 0; background: none; transition: none; }
+body.m.settings-open #settings { display: flex; }
+body.m #settings .drawer-head { display: none; }
 body.m main .panel { display: none; }
 body.m main .panel.tab-active { display: block; }
 body.m .panel { padding: 13px 13px 15px; border-radius: var(--r-sm); }
