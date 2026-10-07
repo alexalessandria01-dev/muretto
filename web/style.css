@@ -95,7 +95,9 @@ body.settings-open #settings { transform: none; visibility: visible; transition:
 #settings .drawer-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 2px; }
 #settings .drawer-head h2 { margin: 0; font-size: 18px; font-weight: 700; }
 #settings .drawer-t { margin: 12px 0 0; font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
-#settings label { display: flex; align-items: center; gap: 9px; white-space: nowrap; }
+#settings label { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 9px; white-space: normal; min-width: 0; }
+#settings label .hint { flex: 1 1 100%; line-height: 1.35; }
+#settings { overflow-x: hidden; }
 #settings .sep { display: none; }
 #settings input[type=checkbox] { accent-color: var(--accent); width: 16px; height: 16px; }
 #settings-close { font-size: 16px; width: 32px; height: 32px; border-radius: 50%; color: var(--muted); }
@@ -668,3 +670,78 @@ body.m #layout-bar .lb-tip::after { content: " · su telefono: trascina le sched
 body.m #lb-cols, body.m #lb-widths, body.m #layout-bar #lb-hidden { display: none; }
 body.m .tile-edit { display: none; }
 @media (prefers-reduced-motion: reduce) { body.m.editing #tabbar button { animation: none; } }
+
+/* ---------- tabellone in un riquadro stretto (pulsante "Disponi"): stesse righe-scheda del telefono.
+   Generato dalle regole body.m qui sopra: se cambiano quelle, va rigenerato. */
+body #board.cards #leaderboard thead { display: none; }
+body #board.cards #leaderboard,
+body #board.cards #leaderboard tbody,
+body #board.cards #leaderboard tr,
+body #board.cards #leaderboard td { display: block; }
+body #board.cards #leaderboard tr {
+  display: grid; align-items: center; gap: 1px 11px;
+  grid-template-columns: 34px minmax(0, 1fr) auto 32px;
+  grid-template-areas: "pos drv gap star" "pos last tyre star";
+  margin-bottom: 7px; padding: 10px 12px 10px 10px;
+  background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--line);
+  border-radius: var(--r-sm);
+}
+body #board.cards #leaderboard td { padding: 0; border: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+body #board.cards td.pos { grid-area: pos; font-size: 23px; font-weight: 800; text-align: center; color: var(--muted); width: auto; }
+body #board.cards td.col-drv { grid-area: drv; }
+body #board.cards td.col-gap { grid-area: gap; font-size: 16px; font-weight: 700; }
+body #board.cards td.col-last { grid-area: last; font-size: 12px; color: var(--muted); text-align: left; }
+body #board.cards td.col-gap .leader { font-size: 10px; font-weight: 650; letter-spacing: .12em; color: var(--green); }
+body #board.cards td.col-tyre { grid-area: tyre; }
+body #board.cards td.star { grid-area: star; align-self: stretch; display: grid !important; place-items: center; width: auto; font-size: 17px; }
+body #board.cards .drv { font-size: 16px; gap: 8px; }
+body #board.cards .drv i { width: 4px; height: 18px; }
+body #board.cards tr.follow { border-left-color: var(--accent) !important; background: linear-gradient(90deg, rgba(232, 17, 45, .16), rgba(232, 17, 45, .04)) !important; }
+body #board.cards tr.fav { border-left-color: var(--yellow) !important; }
+body #board.cards tr.danger { border-left-color: var(--red) !important; }
+body #board.cards tr.follow td,
+body #board.cards tr.fav td,
+body #board.cards tr.danger td { background: none; }
+body #board.cards tr.follow td:first-child { box-shadow: none; }
+body #board.cards tr.follow td.pos { color: var(--text); }
+body #board.cards #leaderboard td.col-int,
+body #board.cards #leaderboard td.col-best,
+body #board.cards #leaderboard td.col-sectors,
+body #board.cards #leaderboard td.col-stops,
+body #board.cards #leaderboard td.col-stints,
+body #board.cards #leaderboard td.metrics,
+body.show-metrics #board.cards #leaderboard td.metrics { display: none; }
+body #board.cards tr.open { background: var(--panel-2); }
+body #board.cards tr.open td.col-int,
+body #board.cards tr.open td.col-best,
+body #board.cards tr.open td.col-sectors,
+body #board.cards tr.open td.col-stops,
+body #board.cards tr.open td.col-stints,
+body.show-metrics #board.cards tr.open td.metrics {
+  display: flex !important; justify-content: space-between; align-items: center; gap: 12px;
+  grid-column: 1 / -1; margin-top: 7px; padding-top: 7px; border-top: 1px solid var(--line-soft);
+  font-size: 13px; overflow: visible;
+}
+body #board.cards tr.open td::before { font-size: 10px; font-weight: 650; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+body #board.cards tr.open td.col-int::before { content: "Intervallo"; }
+body #board.cards tr.open td.col-best::before { content: "Miglior giro"; }
+body #board.cards tr.open td.col-sectors::before { content: "Settori"; }
+body #board.cards tr.open td.col-stops::before { content: "Soste"; }
+body #board.cards tr.open td.col-stints::before { content: "Stint"; }
+body.show-metrics #board.cards tr.open td.metrics::before { content: "Auto"; }
+body #board.cards tr.open .stints { display: inline-flex; width: 150px; }
+body #board.cards #leaderboard tr.cutrow { display: block; padding: 4px 8px; margin: 2px 0 9px; border: 0; border-bottom: 2px dashed var(--red);
+  border-radius: 0; background: none; }
+body #board.cards #leaderboard tr.cutrow td { display: block; border: 0; background: none; }
+body #board.cards #leaderboard tr.train { border-left-color: #ff9f0a; }
+body #board.cards #leaderboard tr.train:not(.train-last) { margin-bottom: 1px; border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+body #board.cards #leaderboard tr.train:not(.train-first) { border-top-left-radius: 0; border-top-right-radius: 0; }
+body.race #board.cards td.col-gap { display: flex !important; flex-direction: column; align-items: flex-end; line-height: 1.15; }
+body.race #board.cards td.col-gap .i { display: block; font-size: 16px; font-weight: 700; }
+body.race #board.cards td.col-gap .i.catching { color: var(--green); }
+body.race #board.cards td.col-gap .g { font-size: 10px; color: var(--muted); font-weight: 500; order: 2; }
+body.race #board.cards td.col-gap .i .drs1 { display: block; font-style: normal; font-size: 9px; font-weight: 700; letter-spacing: .06em; color: var(--green); text-align: right; }
+#board.cards { overflow: visible; }
+/* riquadro medio: via le colonne meno importanti */
+#board.mid #leaderboard .col-stints, #board.mid #leaderboard .col-stops, #board.mid #leaderboard .metrics { display: none !important; }
+#board.narrow #leaderboard .col-sectors, #board.narrow #leaderboard .col-best { display: none !important; }

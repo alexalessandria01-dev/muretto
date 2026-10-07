@@ -1342,8 +1342,8 @@
       prefs.favs = isFav(n) ? prefs.favs.filter((x) => x !== n) : [...prefs.favs, n]; save("favs", prefs.favs); if (state) render();
       return;
     }
-    // su telefono la riga si apre e mostra intervallo, miglior giro, settori, soste e stint
-    if (!isMobile()) return;
+    // su telefono (o tabellone in un riquadro stretto) la riga si apre e mostra intervallo, miglior giro, settori, soste e stint
+    if (!isMobile() && !$("#board").classList.contains("cards")) return;
     const tr = e.target.closest("tr[data-num]"); if (!tr) return;
     openNum = openNum === tr.dataset.num ? "" : tr.dataset.num;
     if (state) renderBoard();
@@ -1474,6 +1474,20 @@
     decorateTiles(); startSorting();
     if (!on) relayoutCharts();
   }
+  /** Ogni pannello si adatta al suo riquadro, non allo schermo: in una colonna stretta il tabellone
+   *  toglie le colonne meno importanti e poi passa alle righe-scheda del telefono. */
+  function sizeTile(el) {
+    const w = el.clientWidth; if (!w) return;
+    el.dataset.w = w < 460 ? "s" : w < 760 ? "m" : "l";
+    if (el.id !== "board") return;
+    const before = el.className;
+    el.classList.toggle("cards", w < 640);
+    el.classList.toggle("narrow", w >= 640 && w < 900);
+    el.classList.toggle("mid", w >= 640 && w < 1080);
+    if (el.className !== before && state) renderBoard();
+  }
+  const sizeObs = typeof ResizeObserver === "undefined" ? null : new ResizeObserver((es) => { for (const e of es) sizeTile(e.target); });
+  for (const id of TILES) sizeObs?.observe($("#" + id));
   function applyTabOrder() {
     const bar = $("#tabbar"), order = prefs.tabOrder; if (!Array.isArray(order)) return;
     for (const t of order) { const b = bar.querySelector(`[data-tab="${t}"]`); if (b) bar.appendChild(b); }
