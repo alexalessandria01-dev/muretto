@@ -89,6 +89,7 @@ class RaceState:
         self._status_log: list[tuple[float, str]] = []  # (ts, codice stato pista)
         self._pit_flag: dict[str, bool] = defaultdict(bool)
         self._lap_start: dict[str, float] = {}
+        self._seg_ts: dict[str, float] = {}   # quando sono cambiati i minisettori di ogni pilota
         self.replay_position: float | None = None
         self.circuit_info: dict = {}  # da MultiViewer: pit_loss {normal, sc, vsc}, tracciato, curve
         self.last_ts: float = 0.0     # istante dell'ultimo messaggio, nel tempo del feed
@@ -157,6 +158,14 @@ class RaceState:
             self._status_log.append((ts, str(data["Status"])))
         if topic == "TimingData":
             self._track_laps(data, ts)
+            # istante esatto dell'ultimo minisettore cambiato: la pagina riceve lo stato ogni mezzo
+            # secondo, e su un minisettore da 2 s quel mezzo secondo è un errore del 25%
+            lines = data.get("Lines") if isinstance(data, dict) else None
+            for num, l in (lines.items() if isinstance(lines, dict) else ()):
+                secs = l.get("Sectors") if isinstance(l, dict) else None
+                secs = secs.values() if isinstance(secs, dict) else secs if isinstance(secs, list) else ()
+                if any(isinstance(sec, dict) and "Segments" in sec for sec in secs):
+                    self._seg_ts[num] = ts
         if topic == "PitLaneTimeCollection":
             self._record_pit_lane(data)
         if isinstance(data, dict):
@@ -573,6 +582,7 @@ class RaceState:
                 "last_of": bool(last.get("OverallFastest")),
                 "best": best.get("Value", ""),
                 "sectors": self._sectors(line),
+                "seg_age": round(max(0.0, self.last_ts - self._seg_ts[num]), 2) if num in self._seg_ts else None,
                 "compound": cur.get("compound", "UNKNOWN"),
                 "age": cur.get("laps", 0),
                 "new": cur.get("new", True),

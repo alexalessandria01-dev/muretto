@@ -142,3 +142,14 @@ def test_qualifying_cut_comes_from_no_entries():
     assert s["session"]["cut"] == 16 and s["session"]["cut_tla"] == "D16"  # in Q1 passano 16, non 15
     by = {r["tla"]: r for r in s["drivers"]}
     assert by["D16"]["cut_gap"] > 0 and by["D17"]["cut_gap"] < 0
+
+
+def test_seg_age_settori_come_lista_o_dizionario():
+    """I minisettori cambiati si registrano sia quando i settori arrivano come dizionario (delta)
+    sia come lista (snapshot): con la lista il server andava in crash."""
+    from muretto.state import RaceState
+    st = RaceState()
+    st.apply("TimingData", {"Lines": {"1": {"Sectors": [{"Segments": [{"Status": 2048}]}]}}}, 10.0)
+    st.apply("TimingData", {"Lines": {"4": {"Sectors": {"0": {"Segments": {"1": {"Status": 2048}}}}}}}, 12.0)
+    st.apply("TimingData", {"Lines": {"1": {"GapToLeader": "+1.0"}}}, 13.0)
+    assert st._seg_ts == {"1": 10.0, "4": 12.0}

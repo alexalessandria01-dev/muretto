@@ -1109,7 +1109,10 @@
           if (!same) return k * nc / n;
           let offP = 0, offC = 0;
           for (let s = 0; s < counts.length; s++) {
-            if (k < offP + counts[s]) return offC + (k - offP) * cc[s] / counts[s];
+            // i minisettori in comune restano dove sono; quelli in più (Baku: uno in fondo al terzo
+            // settore, sulla linea, solo in gara) vanno alla fine del settore. Stirarli in proporzione
+            // spostava tutti quelli del settore fino a 120 m
+            if (k < offP + counts[s]) return offC + Math.min(k - offP, cc[s]);
             offP += counts[s]; offC += cc[s];
           }
           return nc;
@@ -1129,6 +1132,7 @@
    *  Come in f1-telemetry: all'ingresso in uno stato si parte dal suo inizio e si avanza col tempo
    *  verso il successivo, fermandosi al 95% finché i minisettori non dicono che c'è arrivata. */
   const motion = {};
+  const slowTrack = () => /^(sc|vsc|vsc_ending)$/.test(state.session.track);
   function estimatedLaps(d, now) {
     const s = lapState(d); if (!s) return null;
     const ch = stateChain(s.n, d.sectors.map((x) => x.seg.length));
@@ -1138,12 +1142,19 @@
     // davvero (traffico, safety car, gomme finite: si adatta in pochi secondi)
     const calLap = ch.dur.slice(0, s.n).reduce((a, b) => a + (b || 0), 0);
     let m = motion[d.num];
-    if (!m) m = motion[d.num] = { k: s.k, lap: 0, t0: now, known: false, back: 0, pace: lapS && calLap > 30 ? Math.max(.85, Math.min(3, lapS / calLap)) : 1 };
+    if (!m) m = motion[d.num] = { k: s.k, lap: 0, t0: now, known: false, back: 0, own: {}, rel: 1, pace: lapS && calLap > 30 ? Math.max(.85, Math.min(3, lapS / calLap)) : 1 };
     else if (s.k !== m.k) {
-      const enter = () => { m.k = s.k; m.t0 = now; m.known = true; m.back = 0; };
+      // l'istante vero del cambio (seg_age dal server), non quello in cui la pagina se ne accorge
+      const at = now - Math.min(1.5, Math.max(0, d.seg_age ?? 0));
+      const enter = () => { m.k = s.k; m.t0 = at; m.known = true; m.back = 0; };
       if (s.k === m.k + 1 && m.known && ch.dur[m.k]) {   // uno stato fatto per intero: si misura il ritmo
-        const r = Math.max(.8, Math.min(3, (now - m.t0) / ch.dur[m.k]));
+        const obs = at - m.t0, r = Math.max(.8, Math.min(3, obs / ch.dur[m.k]));
         m.pace = Math.max(.85, .6 * m.pace + .4 * r);   // mai molto più veloce di quanto imparato
+        // i tempi suoi, in questa gara, minisettore per minisettore (idea di Alex): veloce sul dritto,
+        // lento in curva. Mediati sui giri; con SC/VSC non si imparano (sono fuori ritmo)
+        const own = m.own[m.k];
+        if (own) m.rel = Math.max(.8, Math.min(2.5, .6 * m.rel + .4 * Math.max(.6, Math.min(3, obs / own))));
+        if (!slowTrack() && obs > ch.dur[m.k] * .5 && obs < ch.dur[m.k] * 2.5) m.own[m.k] = own ? .6 * own + .4 * obs : obs;
       }
       if (s.k < m.k - s.n / 2) { m.lap++; enter(); }                 // nuovo giro
       else if (s.k > m.k) enter();
@@ -1154,8 +1165,10 @@
     // l'ultimo stato (tutti accesi) va dal traguardo-ish fino all'inizio dello stato 0 del giro dopo
     const a = ch.start[m.k], b = m.k < s.n ? ch.start[m.k + 1] : 1 + ch.start[1];
     // con safety car e VSC si va molto più piano: il ritmo scende subito, senza aspettare i minisettori
-    const slow = /^(sc|vsc|vsc_ending)$/.test(state.session.track) ? 1.45 : 0;
-    const durS = ch.dur[m.k] ? ch.dur[m.k] * Math.max(m.pace, slow) : (lapS || 100) / s.n;
+    const slow = slowTrack() ? 1.45 : 0;
+    // dal secondo giro i tempi suoi di questo minisettore, corretti col ritmo degli ultimi tratti;
+    // prima (o se mancano) quelli imparati dall'altra sessione riportati al suo passo
+    const durS = m.own[m.k] ? m.own[m.k] * Math.max(m.rel, slow) : ch.dur[m.k] ? ch.dur[m.k] * Math.max(m.pace, slow) : (lapS || 100) / s.n;
     // avanza col tempo. Arrivata al bordo del minisettore non si ferma: il dato della F1 arriva spesso
     // in ritardo e la macchina è quasi sicuramente già nel tratto dopo. Continua lì, rallentando
     // dolcemente, fino a un terzo del tratto successivo (prima si fermava e ripartiva: "scatta")
@@ -1195,6 +1208,8 @@
    * quella calcolata e non torna indietro, così scorre invece di saltare ogni mezzo secondo. */
   const forceEstimate = new URLSearchParams(location.search).has("nogps");  // prova della diretta col replay
   const LERP = 0.16;                 // quanto della distanza recuperare a ogni fotogramma
+  // inerzia della mappa stimata (regolabili da indirizzo per le prove: ?tau=…&gain=…)
+  const qp = new URLSearchParams(location.search), BASE_TAU = +(qp.get("tau") || 1.5), ERR_GAIN = +(qp.get("gain") || .8);
   const carVis = {};                 // num -> { u: giri non avvolti, i: punto vicino } oppure { x, y }
   let mapRaf = 0, mapLayer = null, mapLayerKey = "";
   function renderMap() { if (!mapRaf) mapRaf = requestAnimationFrame(mapLoop); }
@@ -1270,8 +1285,13 @@
           // ripartenze di colpo. Mai all'indietro.
           // se la pallina è avanti rallenta ma non si ferma (al 35% del passo), salvo che sia avanti di
           // parecchio: lì quasi si ferma ad aspettare
-          const spd = motion[d.num]?.spd || 0, err = t - v.u, floor = err > -.03 ? spd * .35 : spd * .1;
-          const want = Math.max(floor, Math.min(spd * 1.5 + .001, spd + err * 1.2));
+          // il passo previsto cambia di colpo da un minisettore all'altro (i confini della F1 non sono
+          // sempre negli stessi punti): si usa una sua media sull'ultimo secondo e mezzo, così sul
+          // rettilineo la velocità resta costante invece di fare su e giù
+          const spd0 = motion[d.num]?.spd || 0;
+          v.base = v.base == null ? spd0 : v.base + (spd0 - v.base) * Math.min(1, frameDt / BASE_TAU);
+          const spd = v.base, err = t - v.u, floor = err > -.03 ? spd * .35 : spd * .1;
+          const want = Math.max(floor, Math.min(spd * 1.5 + .001, spd + err * ERR_GAIN));
           v.vel += (want - v.vel) * Math.min(1, frameDt * 3);
           v.u += Math.max(0, v.vel) * frameDt;
         }
