@@ -1081,7 +1081,9 @@
       const idx = new Array(nc + 1).fill(null), cdur = new Array(nc + 1).fill(null);
       let at = -Math.round(N * .05);
       for (let k = 0; k <= nc; k++) {
-        const st = cal.states[k], p = st?.path?.[0] || st?.point;
+        // solo gli stati con un tratto vero: il "punto tipico" degli stati rari (lo 0, appena
+        // azzerati i minisettori) può cadere fuori ordine e schiacciare i tratti dopo (Zandvoort)
+        const st = cal.states[k], p = st?.path?.[0];
         if (!p) continue;
         at = idx[k] = Math.max(at, nearAhead(p, at));
         cdur[k] = st.dur || null;
