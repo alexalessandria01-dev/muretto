@@ -1129,25 +1129,34 @@
   function estimatedLaps(d, now) {
     const s = lapState(d); if (!s) return null;
     const ch = stateChain(s.n, d.sectors.map((x) => x.seg.length));
+    const t = /(\d+):(\d+\.\d+)/.exec(d.last || ""), lapS = t ? +t[1] * 60 + +t[2] : null;
+    // i tempi imparati vengono da un'altra sessione (spesso la qualifica, più veloce): il ritmo di
+    // partenza è quello dell'ultimo giro, poi si corregge a ogni minisettore con quanto ci ha messo
+    // davvero (traffico, safety car, gomme finite: si adatta in pochi secondi)
+    const calLap = ch.dur.slice(0, s.n).reduce((a, b) => a + (b || 0), 0);
     let m = motion[d.num];
-    if (!m) m = motion[d.num] = { k: s.k, lap: 0, t0: now, known: false, back: 0 };
+    if (!m) m = motion[d.num] = { k: s.k, lap: 0, t0: now, known: false, back: 0, pace: lapS && calLap > 30 ? Math.max(.85, Math.min(3, lapS / calLap)) : 1 };
     else if (s.k !== m.k) {
-      if (s.k < m.k - s.n / 2) { m.lap++; m.k = s.k; m.t0 = now; m.known = true; m.back = 0; }   // nuovo giro
-      else if (s.k > m.k) { m.k = s.k; m.t0 = now; m.known = true; m.back = 0; }
+      const enter = () => { m.k = s.k; m.t0 = now; m.known = true; m.back = 0; };
+      if (s.k === m.k + 1 && m.known && ch.dur[m.k]) {   // uno stato fatto per intero: si misura il ritmo
+        const r = Math.max(.8, Math.min(3, (now - m.t0) / ch.dur[m.k]));
+        m.pace = Math.max(.85, .6 * m.pace + .4 * r);   // mai molto più veloce di quanto imparato
+      }
+      if (s.k < m.k - s.n / 2) { m.lap++; enter(); }                 // nuovo giro
+      else if (s.k > m.k) enter();
       // un minisettore che si spegne per un attimo è un errore del feed: si crede solo se dura 3 s
       else if (!m.back) m.back = now;
-      else if (now - m.back > 3) { m.k = s.k; m.t0 = now; m.back = 0; }
+      else if (now - m.back > 3) enter();
     } else m.back = 0;
     // l'ultimo stato (tutti accesi) va dal traguardo-ish fino all'inizio dello stato 0 del giro dopo
-    const a = ch.start[m.k], b = m.k < s.n ? ch.start[m.k + 1] : 1 + ch.start[0];
-    const t = /(\d+):(\d+\.\d+)/.exec(d.last || ""), lapS = t ? +t[1] * 60 + +t[2] : null;
-    // i tempi imparati vengono da un'altra sessione (spesso la qualifica, più veloce): si adattano
-    // al passo del pilota col suo ultimo giro, entro limiti ragionevoli (safety car compresa)
-    const calLap = ch.dur.slice(0, s.n).reduce((a, b) => a + (b || 0), 0);
-    const pace = lapS && calLap > 30 ? Math.max(.85, Math.min(1.8, lapS / calLap)) : 1;
-    const durS = ch.dur[m.k] ? ch.dur[m.k] * pace : (lapS || 100) / s.n;
-    const f = m.known ? Math.min(.95, (now - m.t0) / durS) : .5;
-    m.lapS = lapS || 100;
+    const a = ch.start[m.k], b = m.k < s.n ? ch.start[m.k + 1] : 1 + ch.start[1];
+    // con safety car e VSC si va molto più piano: il ritmo scende subito, senza aspettare i minisettori
+    const slow = /^(sc|vsc|vsc_ending)$/.test(state.session.track) ? 1.45 : 0;
+    const durS = ch.dur[m.k] ? ch.dur[m.k] * Math.max(m.pace, slow) : (lapS || 100) / s.n;
+    // avanza col tempo; oltre l'85% rallenta dolcemente invece di fermarsi di colpo al bordo
+    let f = m.known ? (now - m.t0) / durS : .5;
+    if (f > .85) f = .85 + .14 * (1 - Math.exp(-(f - .85) / .14));
+    m.spd = Math.max(0, b - a) / durS;   // giri al secondo, per il movimento con inerzia
     return m.lap + a + Math.max(0, b - a) * f;
   }
 
@@ -1244,10 +1253,15 @@
         if (d.retired || d.stopped || d.inpit) { delete carVis[d.num]; delete motion[d.num]; if (d.inpit && !d.retired) box.push(d); continue; }
         const t = estimatedLaps(d, performance.now() / 1000); if (t == null) continue;
         const v = carVis[d.num];
-        if (!v || v.u == null || Math.abs(t - v.u) > .3) carVis[d.num] = { u: t };     // prima volta o rientro: si va lì
-        // avanti, mai indietro; e se è rimasta indietro recupera al massimo a 2,2 volte la sua media
-        // sul giro, così si vede una macchina che rimonta e non un pallino che schizza
-        else if (t > v.u) v.u += Math.min((t - v.u) * LERP, frameDt * 2.2 / (motion[d.num]?.lapS || 100));
+        if (!v || v.u == null || Math.abs(t - v.u) > .3) carVis[d.num] = { u: t, vel: motion[d.num]?.spd || 0 };   // prima volta o rientro
+        else {
+          // movimento con inerzia: la velocità voluta è quella prevista più un recupero proporzionale
+          // al distacco dalla stima; la velocità vera ci arriva per gradi, così niente frenate e
+          // ripartenze di colpo. Mai all'indietro.
+          const spd = motion[d.num]?.spd || 0, want = Math.max(0, Math.min(spd * 1.5 + .001, spd + (t - v.u) * 1.2));
+          v.vel += (want - v.vel) * Math.min(1, frameDt * 3);
+          v.u += Math.max(0, v.vel) * frameDt;
+        }
         at = pointAt(carVis[d.num].u);
       } else continue;
       const [x, y] = P(R(at));
