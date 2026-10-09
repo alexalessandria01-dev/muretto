@@ -345,6 +345,8 @@
       const drs = isRace() && d.car ? `<span class="drs ${drsState(d.car.drs)}">DRS</span>` : "";
       const gained = d.gained == null || !isRace() ? "" : d.gained > 0 ? `<span class="gained up">▲${d.gained}</span>` : d.gained < 0 ? `<span class="gained down">▼${-d.gained}</span>` : `<span class="gained">–</span>`;
       const sectors = d.sectors.map((s, i) => `<span class="sector"><span class="${s.of || d.best_sector_pos?.[i] === 1 ? "of" : s.pf ? "pf" : ""}">${esc(s.v) || "&nbsp;"}</span><span class="segs">${s.seg.map((x) => `<b class="s${x}"></b>`).join("")}</span></span>`).join("");
+      // migliori settori del pilota a sinistra (viola = il migliore di tutti), il giro in corso a destra
+      const bsec = (d.bests?.sectors || []).map((b) => `<span class="${b.pos === 1 ? "of" : ""}">${esc(b.v) || "–"}</span>`).join("");
       const total = Math.max(1, d.stints.reduce((a, x) => a + (x.laps || 0), 0));
       const stints = d.stints.map((x) => `<b class="${x.compound}" style="width:${(100 * (x.laps || 0) / total).toFixed(1)}%" title="${x.compound} ${x.laps} giri${x.new ? "" : " (usata)"}"></b>`).join("");
       // il taglio lo dice la F1 (NoEntries): con 22 macchine in Q1 passano 16, non 15
@@ -359,7 +361,7 @@
         <td class="r col-int ${d.catching ? "catching" : ""}">${esc(d.interval)}</td>
         <td class="r col-last ${d.last_of ? "of" : d.last_pf ? "pf" : ""}">${esc(d.last)}</td>
         <td class="r col-best">${esc(d.best)}</td>
-        <td class="col-sectors"><span class="sectors">${sectors}</span></td>
+        <td class="col-sectors"><span class="secpair">${bsec ? `<span class="bsec" title="migliori settori del pilota">${bsec}</span>` : ""}<span class="sectors">${sectors}</span></span></td>
         <td class="col-tyre"><span class="tyre"><b class="${d.compound}"></b>${d.age}${d.new ? "" : '<span class="used">usata</span>'}</span></td>
         <td class="r col-stops" title="${stopsTxt(d)}">${d.stops}${d.free_stops ? `<span class="free-stops">${d.free_stops}R</span>` : ""}</td>
         <td class="col-stints"><span class="stints">${stints}</span></td>
@@ -1425,15 +1427,16 @@
    * Su telefono, dove si vede un pannello alla volta, si riordinano le schede in basso. */
   const TILES = ["board", "battle", "wall", "map", "rc", "radio", "analysis"];
   const TILE_NAME = { board: "Tabellone", battle: "Battaglia", wall: "Muretto", map: "Mappa", rc: "Direzione gara", radio: "Radio", analysis: "Analisi" };
-  const LAYOUT_DEFAULT = { cols: [["board", "map", "analysis"], ["battle", "wall", "rc", "radio"]], widths: [2, 1] };
-  const WIDTH_CHOICES = { 1: [[1]], 2: [[2, 1], [3, 2], [1, 1], [2, 3], [1, 2]], 3: [[1, 1, 1], [2, 1, 1], [1, 2, 1], [1, 1, 2]] };
+  const LAYOUT_DEFAULT = { cols: [["board", "map", "analysis"], ["battle", "wall", "rc", "radio"]], widths: [7, 3] };
+  const WIDTH_CHOICES = { 1: [[1]], 2: [[7, 3], [3, 2], [1, 1], [2, 3], [1, 2]], 3: [[1, 1, 1], [2, 1, 1], [1, 2, 1], [1, 1, 2]] };
   const fracTxt = (w) => { const t = w.reduce((a, b) => a + b, 0); return w.map((x) => Math.round(x / t * 100) + "%").join(" · "); };
   /** Ogni pannello una sola volta; quelli nuovi o persi finiscono in fondo all'ultima colonna. */
   function normLayout(l) {
     const cols = (Array.isArray(l?.cols) && l.cols.length >= 1 && l.cols.length <= 3 ? l.cols : LAYOUT_DEFAULT.cols).map((c) => (Array.isArray(c) ? c : []));
     const seen = new Set(), out = cols.map((c) => c.filter((id) => TILES.includes(id) && !seen.has(id) && seen.add(id)));
     for (const id of TILES) if (!seen.has(id)) out[out.length - 1].push(id);
-    const widths = Array.isArray(l?.widths) && l.widths.length === out.length ? l.widths : WIDTH_CHOICES[out.length][0];
+    let widths = Array.isArray(l?.widths) && l.widths.length === out.length ? l.widths : WIDTH_CHOICES[out.length][0];
+    if (widths.join() === "2,1") widths = [7, 3];  // il vecchio 67 · 33 ora è 70 · 30
     return { cols: out, widths };
   }
   let layout = normLayout(prefs.layout);

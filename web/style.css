@@ -181,6 +181,8 @@ td.star.on { color: var(--yellow); }
 td.pos { font-family: "Titillium Web", sans-serif; font-weight: 900; font-size: 17px; width: 32px; }
 .drv { display: inline-flex; align-items: center; gap: 9px; font-family: var(--mono); font-weight: 700; letter-spacing: .03em; }
 .drv i { width: 5px; height: 20px; border-radius: 2px; display: inline-block; }
+/* nome e etichette (BOX, TL, PEN…) sulla stessa linea di mezzo, non sulla linea di base del testo */
+#leaderboard td.col-drv > * { vertical-align: middle; }
 .gained { font-size: 10px; margin-left: 5px; font-family: inherit; font-weight: 700; }
 .gained.up { color: var(--green); } .gained.down { color: var(--red); }
 .drs {
@@ -208,6 +210,13 @@ body.show-metrics .metrics { display: table-cell; }
 .segs b.s2048 { background: var(--yellow); } .segs b.s2064 { background: var(--blue); }
 .sector span { font-size: 11px; color: var(--muted); }
 .sector span.pf { color: var(--green); } .sector span.of { color: var(--purple); }
+/* i numeri dei settori sulla linea di mezzo della riga, come gap e tempi: i pallini pendono sotto
+   (fuori dal flusso) e lo stesso spazio sopra e sotto li tiene centrati */
+.secpair { display: inline-flex; align-items: center; gap: 10px; padding: 7px 0; vertical-align: middle; }
+#leaderboard .sector { position: relative; }
+#leaderboard .segs { position: absolute; left: 0; top: 100%; margin-top: 3px; }
+.bsec { display: inline-flex; gap: 8px; padding-right: 10px; border-right: 1px solid #2a313b; }
+.bsec span { font-size: 11px; color: var(--text); } .bsec span.of { color: var(--purple); }
 
 /* gomma: cerchio colorato con l'iniziale della mescola dentro */
 .tyre { display: inline-flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums; }
@@ -345,7 +354,7 @@ body:not(.m) #board { container-type: inline-size; }
 @container (max-width: 1150px) {
   #leaderboard td, #leaderboard th { padding-left: 5px; padding-right: 5px; }
   #leaderboard .segs b { width: 4px; }
-  #leaderboard .sectors { gap: 6px; }
+  #leaderboard .sectors, #leaderboard .bsec { gap: 6px; }
   #leaderboard .stints { width: 84px; }
   #leaderboard .car .bars { width: 30px; }
 }
