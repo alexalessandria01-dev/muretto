@@ -79,7 +79,9 @@
   const RED_PIT = "bandiera rossa: cambio gomme gratis";
   const isRedFlag = () => state?.session.track === "red";
   /** Soste, con quelle fatte a gara sospesa (gratis, ma la F1 le conta). */
-  const stopsTxt = (d) => `${d.stops}${d.free_stops ? ` (${d.free_stops} con la rossa)` : ""}`;
+  // solo in gara: in qualifica e nelle libere stare in garage più di 5 minuti è normale, non è una rossa
+  const freeStops = (d) => isRace() ? d.free_stops : 0;
+  const stopsTxt = (d) => `${d.stops}${freeStops(d) ? ` (${freeStops(d)} con la rossa)` : ""}`;
   /** L'avviso "una sola mescola" serve da un terzo di gara in poi (al via ce l'hanno tutti), e mai nella Sprint. */
   const mixDue = () => isRace() && state.session.name !== "Sprint" && state.session.lap && state.session.total_laps && state.session.lap >= state.session.total_laps / 3;
   const drsState = (v) => (v == null ? "" : v > 9 ? "on" : v === 8 ? "possible" : "off");
@@ -363,7 +365,7 @@
         <td class="r col-best">${esc(d.best)}</td>
         <td class="col-sectors"><span class="secpair">${bsec ? `<span class="bsec" title="migliori settori del pilota">${bsec}</span>` : ""}<span class="sectors">${sectors}</span></span></td>
         <td class="col-tyre"><span class="tyre"><b class="${d.compound}"></b>${d.age}${d.new ? "" : '<span class="used">usata</span>'}</span></td>
-        <td class="r col-stops" title="${stopsTxt(d)}">${d.stops}${d.free_stops ? `<span class="free-stops">${d.free_stops}R</span>` : ""}</td>
+        <td class="r col-stops" title="${stopsTxt(d)}">${d.stops}${freeStops(d) ? `<span class="free-stops">${freeStops(d)}R</span>` : ""}</td>
         <td class="col-stints"><span class="stints">${stints}</span></td>
         <td class="metrics">${carCell(d)}</td>
       </tr>`;
@@ -646,7 +648,8 @@
     sc: { title: "SAFETY CAR", sub: (p) => `box ora: perdi ${Math.round(p.sc)} s invece di ${Math.round(p.normal)}`, notes: [[660, 0.2], [660, 0.2], [660, 0.2]], vib: [300, 150, 300, 150, 300] },
     vsc: { title: "VIRTUAL SAFETY CAR", sub: (p) => `box ora: perdi ${Math.round(p.vsc)} s invece di ${Math.round(p.normal)}`, notes: [[740, 0.2], [740, 0.2]], vib: [300, 150, 300] },
     vsc_ending: { title: "VSC FINISCE", sub: () => "si riparte a momenti", notes: [[880, 0.15]], vib: [150] },
-    red: { title: "BANDIERA ROSSA", sub: () => "gara sospesa · cambio gomme gratis", notes: [[440, 0.4], [440, 0.4]], vib: [600, 200, 600] },
+    // il cambio gomme gratis vale solo in gara: in qualifica e nelle libere si sospende e basta
+    red: { title: "BANDIERA ROSSA", sub: () => isRace() ? "gara sospesa · cambio gomme gratis" : "sessione sospesa · tutti ai box", notes: [[440, 0.4], [440, 0.4]], vib: [600, 200, 600] },
   };
   const THEME = { sc: "#ffd426", vsc: "#ffd426", vsc_ending: "#ffd426", red: "#ff453a" };
   let lastTrack = null, lastTrackPath = null, takeoverTimer = null;
