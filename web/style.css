@@ -217,6 +217,11 @@ body.show-metrics .metrics { display: table-cell; }
 #leaderboard .segs { position: absolute; left: 0; top: 100%; margin-top: 3px; }
 .bsec { display: inline-flex; gap: 8px; padding-right: 10px; border-right: 1px solid #2a313b; }
 .bsec span { font-size: 11px; color: var(--text); } .bsec span.of { color: var(--purple); }
+/* T1 T2 T3 sopra i migliori settori: stessa larghezza fissa per numeri e intestazione */
+.bsec span { min-width: 6ch; font-family: var(--mono); }
+.sechead { display: inline-flex; gap: 10px; }
+.sechead .bsec { padding-right: 10px; }
+.sechead .bsec span { font-size: 11px; color: inherit; }
 
 /* gomma: cerchio colorato con l'iniziale della mescola dentro */
 .tyre { display: inline-flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums; }
