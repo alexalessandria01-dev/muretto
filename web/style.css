@@ -144,6 +144,9 @@ main > .col { display: flex; flex-direction: column; gap: var(--gap); min-width:
 }
 .panel-head { display: flex; align-items: baseline; gap: 6px 14px; flex-wrap: wrap; margin-bottom: 12px; padding-bottom: 10px; border-bottom: 1px solid var(--line-soft); }
 .panel-head h2 { color: var(--text); font-size: 12px; }
+/* la scritta della mappa cambia con le gialle: sempre su una riga, sennò la mappa salta su e giù */
+#map .panel-head { flex-wrap: nowrap; }
+#map-hint { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .panel-head h2 { margin: 0; flex: none; }
 .panel-head label { font-size: 12px; color: var(--muted); }
 .panel-head .hint { min-width: 0; }

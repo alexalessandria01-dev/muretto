@@ -1226,7 +1226,7 @@
     mapRaf = requestAnimationFrame(mapLoop);
   }
   document.addEventListener("visibilitychange", () => { if (!document.hidden && state) renderMap(); });
-  function setHint(t) { const h = $("#map-hint"); if (h.textContent !== t) h.textContent = t; }
+  function setHint(t) { const h = $("#map-hint"); if (h.textContent !== t) { h.textContent = t; h.title = t; } }
   let lastFrame = 0, frameDt = 1 / 60;
   function drawMap() {
     const nowF = performance.now(); frameDt = lastFrame ? Math.min(.25, (nowF - lastFrame) / 1000) : 1 / 60; lastFrame = nowF;
