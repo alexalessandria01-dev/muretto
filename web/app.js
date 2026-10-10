@@ -1447,6 +1447,7 @@
   /** Sposta i pannelli veri (non copie: restano i loro ascoltatori) nelle colonne. */
   function applyLayout() {
     const main = $("main");
+    main.style.minHeight = "";   // disposizione nuova: l'altezza minima tenuta per lo scorrimento riparte da zero
     let cols = [...main.querySelectorAll(":scope > .col")];
     while (cols.length < layout.cols.length) { const c = document.createElement("div"); c.className = "col"; main.appendChild(c); cols.push(c); }
     layout.cols.forEach((ids, i) => { const c = cols[i]; c.style.flex = `${layout.widths[i]} 1 0`; for (const id of ids) c.appendChild($("#" + id)); });
@@ -1611,6 +1612,37 @@
     prefs.mobile = e.target.value; save("mobile", prefs.mobile);
     applyMobileMode(); chartKey = ""; gapKey = ""; if (state) render();
   });
+  /** La pagina non deve scappare mentre la guardi. Chrome tiene fermo da solo quello che hai sotto gli
+   *  occhi quando un pannello sopra cambia altezza (gialle, OUT, intestazione che va a capo), Safari no:
+   *  qui si ricorda il pannello a un terzo dello schermo e, se si sposta, si scorre della stessa misura.
+   *  E la pagina non si accorcia mai da sola: in fondo (Analisi) un pannello che si stringe un attimo
+   *  costringeva il browser a tirarti su. Si riparte da zero solo cambiando finestra o disposizione. */
+  {
+    const main = $("main");
+    let anchor = null, anchorTop = 0;
+    const pick = () => {
+      anchor = null;
+      if (scrollY < 5 || document.body.classList.contains("editing")) return;   // in cima resta in cima
+      const line = innerHeight / 3;
+      for (const t of main.querySelectorAll("section.panel")) {
+        if (!t.offsetParent) continue;
+        const r = t.getBoundingClientRect();
+        if (r.top <= line && r.bottom > line) { anchor = t; anchorTop = r.top; return; }
+      }
+    };
+    const hold = () => {
+      const was = parseFloat(main.style.minHeight) || 0, h = main.offsetHeight;
+      if (h > was) main.style.minHeight = h + "px";
+      if (!anchor) return;
+      const d = anchor.getBoundingClientRect().top - anchorTop;
+      if (Math.abs(d) >= 1) scrollBy(0, d);
+    };
+    addEventListener("scroll", pick, { passive: true });
+    addEventListener("resize", () => { main.style.minHeight = ""; });
+    const keep = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(hold);
+    keep?.observe(document.body); keep?.observe(main);   // body: si accorge anche di ciò che sta sopra (fascia, intestazione)
+    for (const id of TILES) keep?.observe($("#" + id));
+  }
   applyLayout();
   applyTabOrder();
   applyMobileMode();
